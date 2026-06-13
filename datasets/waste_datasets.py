@@ -90,8 +90,20 @@ class ZeroWasteDataset(WasteBaseDataset):
     def _load_data(self):
         # split_dir = self.root / self.split
         # ann_file = self.root / f"{self.split}_annotations.json"
-        split_dir = self.root / self.split / "data"
-        ann_file = self.root / self.split / "labels.json"
+        base_dir = self.root / "splits_final_deblurred"
+
+        split_dir = base_dir / self.split / "data"
+        ann_file = base_dir / self.split / "labels.json"
+        print("=" * 50)
+        print("ROOT      :", self.root)
+        print("BASE_DIR  :", base_dir)
+        print("SPLIT_DIR :", split_dir)
+        print("ANN_FILE  :", ann_file)
+        print("ROOT EXISTS     :", self.root.exists())
+        print("BASE EXISTS     :", base_dir.exists())
+        print("SPLIT EXISTS    :", split_dir.exists())
+        print("ANN EXISTS      :", ann_file.exists())
+        print("=" * 50)
         if not split_dir.exists():
             raise FileNotFoundError(
                 f"ZeroWaste dataset không tìm thấy tại {self.root}\n"
@@ -259,19 +271,15 @@ class SpectralWasteDataset(WasteBaseDataset):
             return TF.resize(hsi_tensor, [self.img_size, self.img_size])
         except Exception:
             return None
-    def _load_hsi(self, hsi_path)
-    """Load hyperspectral image (H, W, C) → (C, H, W) tensor"""
+    def _load_hsi(self, hsi_path):
+        """Load hyperspectral image (H, W, C) → (C, H, W) tensor"""
         if hsi_path is None:
             return None
-
         hsi = tiff.imread(hsi_path).astype(np.float32)
-
         # (H,W,C)
         if hsi.ndim == 3:
             hsi = hsi[:, :, self.hsi_bands]
-
         hsi = (hsi - hsi.min()) / (hsi.max() - hsi.min() + 1e-8)
-
         return torch.from_numpy(hsi).permute(2,0,1)
 
     def __getitem__(self, idx: int) -> Dict:
@@ -799,10 +807,10 @@ class MJUWasteDataset(WasteBaseDataset):
 # ─── Dataset Factory ─────────────────────────────────────────────────────────
 
 DATASET_CLASSES = {
-    "zerowaste": ZeroWasteDataset,
-    "spectralwaste": SpectralWasteDataset,
-    "taco": TACODataset,
-    "mjuwaste": MJUWasteDataset,
+    "zerowaste-f-final": ZeroWasteDataset,
+    "spectralwaste-segmentation": SpectralWasteDataset,
+    "taco-dataset": TACODataset,
+    "mju-waste": MJUWasteDataset,
 }
 
 

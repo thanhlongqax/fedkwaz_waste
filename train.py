@@ -200,8 +200,8 @@ def train(args):
     global_model = build_client_model("resnet50", num_classes=4, feature_dim=fl_cfg.feature_dim)
 
     # Proxy loader (dùng dataset của client_0 làm proxy)
-    proxy_ds = build_demo_dataset("zerowaste", num_samples=100) if demo_mode else \
-        build_dataset("zerowaste", train_cfg.data_root, "train", train_cfg.img_size)
+    proxy_ds = build_demo_dataset("zerowaste-f-final", num_samples=100) if demo_mode else \
+        build_dataset("zerowaste-f-final", train_cfg.data_root, "train", train_cfg.img_size)
 
     from torch.utils.data import DataLoader
 

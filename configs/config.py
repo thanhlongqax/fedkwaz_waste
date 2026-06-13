@@ -55,13 +55,18 @@ DATASET_REGISTRY = {
 
 # ─── FL Client Assignment ────────────────────────────────────────────────────
 
+# CLIENT_DATASET_MAP = {
+#     "client_0": "zerowaste",       # Nhà máy tái chế nhựa - Industrial RGB
+#     "client_1": "spectralwaste",   # Nhà máy phân loại quang học - RGB+HSI
+#     "client_2": "taco",            # Nhà máy đô thị - Mobile cameras
+#     "client_3": "mjuwaste",        # Nhà máy thí nghiệm - RGBD
+# }
 CLIENT_DATASET_MAP = {
-    "client_0": "zerowaste",       # Nhà máy tái chế nhựa - Industrial RGB
-    "client_1": "spectralwaste",   # Nhà máy phân loại quang học - RGB+HSI
-    "client_2": "taco",            # Nhà máy đô thị - Mobile cameras
-    "client_3": "mjuwaste",        # Nhà máy thí nghiệm - RGBD
+    "client_0": "zerowaste-f-final",
+    "client_1": "spectralwaste-segmentation",
+    "client_2": "taco-dataset",
+    "client_3": "mju-waste",
 }
-
 CLIENT_MODEL_MAP = {
     "client_0": "resnet50",        # Server GPU - mô hình lớn
     "client_1": "efficientnet_b3", # Workstation - mô hình trung bình
@@ -106,7 +111,7 @@ class FedKWAZConfig:
 
     # === Proxy Model ===
     proxy_model: str = "resnet18"        # Proxy model nhỏ trên server
-    proxy_dataset: str = "zerowaste"     # Dataset proxy (có thể public)
+    proxy_dataset: str = "zerowaste-f-final"     # Dataset proxy (có thể public)
     proxy_lr: float = 5e-4
 
     # === Aggregation ===
