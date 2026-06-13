@@ -450,13 +450,20 @@ class TACODataset(WasteBaseDataset):
 
 
 # ─── MJU-Waste Dataset ────────────────────────────────────────────────────────
-
 class MJUWasteDataset(WasteBaseDataset):
     """
-    MJU-Waste Dataset - Sensors 2020
-    Camera: Microsoft Kinect (RGB + Depth)
-    Classes: waste (binary segmentation)
-    Download: https://drive.google.com/file/d/1o101UBJGeeMPpI-DSY6oh-tLk9AHXMny
+    MJU-Waste Dataset
+
+    Structure:
+    mju-waste/
+    ├── DepthImages/
+    ├── ImageSets/
+    │   └── Segmentation/
+    │       ├── train.txt
+    │       ├── val.txt
+    │       ├── test.txt
+    ├── JPEGImages/
+    ├── SegmentationClass/
     """
 
     CLASS_NAMES = ["background", "waste"]
@@ -472,100 +479,188 @@ class MJUWasteDataset(WasteBaseDataset):
     ):
         self.use_depth = use_depth
         self.class_names = self.CLASS_NAMES
-        super().__init__(root, split, img_size, **kwargs)
+
+        super().__init__(
+            root=root,
+            split=split,
+            img_size=img_size,
+            **kwargs
+        )
 
     def _load_data(self):
-        # split_file = self.root / f"{self.split}.json"
+
         split_file = (
             self.root
             / "ImageSets"
             / "Segmentation"
             / f"{self.split}.txt"
         )
+
         if not split_file.exists():
             raise FileNotFoundError(
-                f"MJU-Waste không tìm thấy tại {self.root}\n"
-                f"Tải về tại: https://drive.google.com/file/d/1o101UBJGeeMPpI-DSY6oh-tLk9AHXMny"
+                f"Không tìm thấy split file: {split_file}"
             )
 
-        with open(split_file) as f:
-            data = json.load(f)
-
         img_dir = self.root / "JPEGImages"
-        depth_dir = self.root / "Depth"
-        ann_dir = self.root / "SegmentationClass"
+        depth_dir = self.root / "DepthImages"
+        mask_dir = self.root / "SegmentationClass"
 
-        for img_info in data.get("images", []):
-            file_name = img_info["file_name"]
-            img_path = img_dir / file_name
+        with open(split_file, "r") as f:
+            image_ids = [
+                line.strip()
+                for line in f.readlines()
+                if line.strip()
+            ]
+
+        for image_id in image_ids:
+
+            img_path = img_dir / f"{image_id}.jpg"
+
+            if not img_path.exists():
+                img_path = img_dir / f"{image_id}.png"
+
             if not img_path.exists():
                 continue
 
-            stem = Path(file_name).stem
-            depth_path = depth_dir / f"{stem}.png"
-            mask_path = ann_dir / f"{stem}.png"
-
-            anns = [a for a in data.get("annotations", [])
-                    if a["image_id"] == img_info["id"]]
+            depth_path = depth_dir / f"{image_id}.png"
+            mask_path = mask_dir / f"{image_id}.png"
 
             self.images.append(img_path)
+
             self.annotations.append({
-                "boxes": [a["bbox"] for a in anns],
-                "labels": [1] * len(anns),   # Tất cả đều là "waste"
-                "masks": [a.get("segmentation", []) for a in anns],
-                "depth_path": str(depth_path) if depth_path.exists() else None,
-                "mask_path": str(mask_path) if mask_path.exists() else None,
+                "depth_path": (
+                    str(depth_path)
+                    if depth_path.exists()
+                    else None
+                ),
+                "mask_path": (
+                    str(mask_path)
+                    if mask_path.exists()
+                    else None
+                )
             })
 
-    def _load_depth(self, depth_path: Optional[str]) -> Optional[torch.Tensor]:
-        """Load depth image → (1, H, W) normalized tensor"""
-        if depth_path is None or not Path(depth_path).exists():
+    def _load_depth(
+        self,
+        depth_path: Optional[str]
+    ) -> Optional[torch.Tensor]:
+
+        if depth_path is None:
             return None
+
+        if not Path(depth_path).exists():
+            return None
+
         try:
             depth = Image.open(depth_path)
-            depth = depth.resize((self.img_size, self.img_size), Image.NEAREST)
-            depth_arr = np.array(depth, dtype=np.float32)
-            depth_arr = (depth_arr - depth_arr.min()) / (depth_arr.max() - depth_arr.min() + 1e-8)
-            return torch.from_numpy(depth_arr).unsqueeze(0)  # (1, H, W)
+
+            depth = depth.resize(
+                (self.img_size, self.img_size),
+                Image.NEAREST
+            )
+
+            depth_arr = np.array(
+                depth,
+                dtype=np.float32
+            )
+
+            depth_arr = (
+                depth_arr - depth_arr.min()
+            ) / (
+                depth_arr.max()
+                - depth_arr.min()
+                + 1e-8
+            )
+
+            return torch.from_numpy(
+                depth_arr
+            ).unsqueeze(0)
+
         except Exception:
             return None
 
-    def __getitem__(self, idx: int) -> Dict:
+    def _load_mask(
+        self,
+        mask_path: Optional[str]
+    ) -> Optional[torch.Tensor]:
+
+        if mask_path is None:
+            return None
+
+        if not Path(mask_path).exists():
+            return None
+
+        try:
+            mask = Image.open(mask_path)
+
+            mask = mask.resize(
+                (self.img_size, self.img_size),
+                Image.NEAREST
+            )
+
+            mask = np.array(mask)
+
+            mask = (mask > 0).astype(np.uint8)
+
+            return torch.from_numpy(mask).long()
+
+        except Exception:
+            return None
+
+    def __getitem__(self, idx: int):
+
         img_path = self.images[idx]
         ann = self.annotations[idx]
 
         image = Image.open(img_path).convert("RGB")
-        w_orig, h_orig = image.size
-        image = image.resize((self.img_size, self.img_size))
 
-        scale_x, scale_y = self.img_size / w_orig, self.img_size / h_orig
-        boxes = []
-        for box in ann["boxes"]:
-            x, y, bw, bh = box
-            boxes.append([x * scale_x, y * scale_y, (x + bw) * scale_x, (y + bh) * scale_y])
+        image = image.resize(
+            (self.img_size, self.img_size)
+        )
 
         if self.transform:
             image_tensor = self.transform(image)
         else:
             image_tensor = self._default_transforms()(image)
 
+        # Depth
         depth_tensor = None
+
         if self.use_depth:
-            depth_tensor = self._load_depth(ann.get("depth_path"))
+            depth_tensor = self._load_depth(
+                ann["depth_path"]
+            )
+
         if depth_tensor is None:
-            depth_tensor = torch.zeros(1, self.img_size, self.img_size)
+            depth_tensor = torch.zeros(
+                1,
+                self.img_size,
+                self.img_size
+            )
+
+        # Segmentation Mask
+        mask_tensor = self._load_mask(
+            ann["mask_path"]
+        )
+
+        if mask_tensor is None:
+            mask_tensor = torch.zeros(
+                self.img_size,
+                self.img_size,
+                dtype=torch.long
+            )
 
         return {
             "image": image_tensor,
-            "depth": depth_tensor,                 # (1, H, W)
-            "boxes": torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4)),
-            "labels": torch.tensor(ann["labels"], dtype=torch.long),
+            "depth": depth_tensor,
+            "mask": mask_tensor,
             "image_path": str(img_path),
             "dataset": "mjuwaste",
             "camera_type": self.CAMERA_TYPE,
         }
 
-    def get_client_info(self) -> Dict:
+    def get_client_info(self):
+
         return {
             "dataset_name": "MJU-Waste",
             "camera_type": self.CAMERA_TYPE,
@@ -575,6 +670,130 @@ class MJUWasteDataset(WasteBaseDataset):
             "resolution": "640x480",
             "hardware": "Raspberry Pi 4 (IoT Edge)",
         }
+# class MJUWasteDataset(WasteBaseDataset):
+#     """
+#     MJU-Waste Dataset - Sensors 2020
+#     Camera: Microsoft Kinect (RGB + Depth)
+#     Classes: waste (binary segmentation)
+#     Download: https://drive.google.com/file/d/1o101UBJGeeMPpI-DSY6oh-tLk9AHXMny
+#     """
+
+#     CLASS_NAMES = ["background", "waste"]
+#     CAMERA_TYPE = "rgbd_kinect"
+
+#     def __init__(
+#         self,
+#         root: str,
+#         split: str = "train",
+#         img_size: int = 640,
+#         use_depth: bool = True,
+#         **kwargs
+#     ):
+#         self.use_depth = use_depth
+#         self.class_names = self.CLASS_NAMES
+#         super().__init__(root, split, img_size, **kwargs)
+
+#     def _load_data(self):
+#         # split_file = self.root / f"{self.split}.json"
+#         split_file = (
+#             self.root
+#             / "ImageSets"
+#             / "Segmentation"
+#             / f"{self.split}.txt"
+#         )
+#         if not split_file.exists():
+#             raise FileNotFoundError(
+#                 f"MJU-Waste không tìm thấy tại {self.root}\n"
+#                 f"Tải về tại: https://drive.google.com/file/d/1o101UBJGeeMPpI-DSY6oh-tLk9AHXMny"
+#             )
+
+#         with open(split_file) as f:
+#             data = json.load(f)
+
+#         img_dir = self.root / "JPEGImages"
+#         depth_dir = self.root / "Depth"
+#         ann_dir = self.root / "SegmentationClass"
+
+#         for img_info in data.get("images", []):
+#             file_name = img_info["file_name"]
+#             img_path = img_dir / file_name
+#             if not img_path.exists():
+#                 continue
+
+#             stem = Path(file_name).stem
+#             depth_path = depth_dir / f"{stem}.png"
+#             mask_path = ann_dir / f"{stem}.png"
+
+#             anns = [a for a in data.get("annotations", [])
+#                     if a["image_id"] == img_info["id"]]
+
+#             self.images.append(img_path)
+#             self.annotations.append({
+#                 "boxes": [a["bbox"] for a in anns],
+#                 "labels": [1] * len(anns),   # Tất cả đều là "waste"
+#                 "masks": [a.get("segmentation", []) for a in anns],
+#                 "depth_path": str(depth_path) if depth_path.exists() else None,
+#                 "mask_path": str(mask_path) if mask_path.exists() else None,
+#             })
+
+#     def _load_depth(self, depth_path: Optional[str]) -> Optional[torch.Tensor]:
+#         """Load depth image → (1, H, W) normalized tensor"""
+#         if depth_path is None or not Path(depth_path).exists():
+#             return None
+#         try:
+#             depth = Image.open(depth_path)
+#             depth = depth.resize((self.img_size, self.img_size), Image.NEAREST)
+#             depth_arr = np.array(depth, dtype=np.float32)
+#             depth_arr = (depth_arr - depth_arr.min()) / (depth_arr.max() - depth_arr.min() + 1e-8)
+#             return torch.from_numpy(depth_arr).unsqueeze(0)  # (1, H, W)
+#         except Exception:
+#             return None
+
+#     def __getitem__(self, idx: int) -> Dict:
+#         img_path = self.images[idx]
+#         ann = self.annotations[idx]
+
+#         image = Image.open(img_path).convert("RGB")
+#         w_orig, h_orig = image.size
+#         image = image.resize((self.img_size, self.img_size))
+
+#         scale_x, scale_y = self.img_size / w_orig, self.img_size / h_orig
+#         boxes = []
+#         for box in ann["boxes"]:
+#             x, y, bw, bh = box
+#             boxes.append([x * scale_x, y * scale_y, (x + bw) * scale_x, (y + bh) * scale_y])
+
+#         if self.transform:
+#             image_tensor = self.transform(image)
+#         else:
+#             image_tensor = self._default_transforms()(image)
+
+#         depth_tensor = None
+#         if self.use_depth:
+#             depth_tensor = self._load_depth(ann.get("depth_path"))
+#         if depth_tensor is None:
+#             depth_tensor = torch.zeros(1, self.img_size, self.img_size)
+
+#         return {
+#             "image": image_tensor,
+#             "depth": depth_tensor,                 # (1, H, W)
+#             "boxes": torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4)),
+#             "labels": torch.tensor(ann["labels"], dtype=torch.long),
+#             "image_path": str(img_path),
+#             "dataset": "mjuwaste",
+#             "camera_type": self.CAMERA_TYPE,
+#         }
+
+#     def get_client_info(self) -> Dict:
+#         return {
+#             "dataset_name": "MJU-Waste",
+#             "camera_type": self.CAMERA_TYPE,
+#             "num_classes": 1,
+#             "num_samples": len(self),
+#             "modality": "RGBD",
+#             "resolution": "640x480",
+#             "hardware": "Raspberry Pi 4 (IoT Edge)",
+#         }
 
 
 # ─── Dataset Factory ─────────────────────────────────────────────────────────
