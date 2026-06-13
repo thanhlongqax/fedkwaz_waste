@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
-
+import tifffile as tiff
 
 # ─── Base Dataset ────────────────────────────────────────────────────────────
 
@@ -88,9 +88,10 @@ class ZeroWasteDataset(WasteBaseDataset):
         super().__init__(root, split, img_size, **kwargs)
 
     def _load_data(self):
-        split_dir = self.root / self.split
-        ann_file = self.root / f"{self.split}_annotations.json"
-
+        # split_dir = self.root / self.split
+        # ann_file = self.root / f"{self.split}_annotations.json"
+        split_dir = self.root / self.split / "data"
+        ann_file = self.root / self.split / "labels.json"
         if not split_dir.exists():
             raise FileNotFoundError(
                 f"ZeroWaste dataset không tìm thấy tại {self.root}\n"
@@ -258,6 +259,20 @@ class SpectralWasteDataset(WasteBaseDataset):
             return TF.resize(hsi_tensor, [self.img_size, self.img_size])
         except Exception:
             return None
+    def _load_hsi(self, hsi_path)
+    """Load hyperspectral image (H, W, C) → (C, H, W) tensor"""
+        if hsi_path is None:
+            return None
+
+        hsi = tiff.imread(hsi_path).astype(np.float32)
+
+        # (H,W,C)
+        if hsi.ndim == 3:
+            hsi = hsi[:, :, self.hsi_bands]
+
+        hsi = (hsi - hsi.min()) / (hsi.max() - hsi.min() + 1e-8)
+
+        return torch.from_numpy(hsi).permute(2,0,1)
 
     def __getitem__(self, idx: int) -> Dict:
         img_path = self.images[idx]
@@ -337,9 +352,10 @@ class TACODataset(WasteBaseDataset):
         super().__init__(root, split, img_size, **kwargs)
 
     def _load_data(self):
-        ann_file = self.root / "annotations.json"
+        # ann_file = self.root / "annotations.json"
+        # img_dir = self.root / "data"
+        ann_file = self.root / "data" / "annotations.json"
         img_dir = self.root / "data"
-
         if not ann_file.exists():
             raise FileNotFoundError(
                 f"TACO dataset không tìm thấy tại {self.root}\n"
@@ -459,8 +475,13 @@ class MJUWasteDataset(WasteBaseDataset):
         super().__init__(root, split, img_size, **kwargs)
 
     def _load_data(self):
-        split_file = self.root / f"{self.split}.json"
-
+        # split_file = self.root / f"{self.split}.json"
+        split_file = (
+            self.root
+            / "ImageSets"
+            / "Segmentation"
+            / f"{self.split}.txt"
+        )
         if not split_file.exists():
             raise FileNotFoundError(
                 f"MJU-Waste không tìm thấy tại {self.root}\n"

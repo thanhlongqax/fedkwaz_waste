@@ -80,6 +80,75 @@ python train.py --mode demo --num_rounds 20 --batch_size 8
 #   taco/            ← TACO dataset
 #   mjuwaste/        ← MJU-Waste dataset
 
+## 📦 Cấu trúc dataset zerowaste-f-final
+```
+/splits_final_deblurred/
+├── test/
+│   └── data
+    └── sem_seg   
+    └── labels.json   
+├── train/
+│   └── data
+    └── sem_seg   
+    └── labels.json         
+├── val/
+│   └── data
+    └── sem_seg   
+    └── labels.json  
+
+```
+## 📦 Cấu trúc dataset TACO_dataset
+```
+/data/
+├── batch_1/  
+├── batch_2/
+...
+├── batch_15/        
+├── annotations.json 
+├── annotations_unofficial.json 
+
+```
+
+## 📦 Cấu trúc dataset spectralwaste_segmentation
+```
+/spectralwaste_segmentation/
+├── rgb/
+│   └── test/
+    └── train/   
+    └── val/
+├── labels_rgb/
+│   └── test/
+    └── train/   
+    └── val/
+├── labels_hyper_lt/
+│   └── test/
+    └── train/   
+    └── val/
+├── hyper/
+│   └── test/
+    └── train/   
+    └── val/
+├── meta.json 
+
+```
+## 📦 Cấu trúc dataset mju-waste
+```
+/mju-waste/
+├── DepthImages/
+│   └── test/
+├── ImageSets/
+│   └── Segmentation/
+      └── test.txt
+      └── train.txt
+      └── val.txt
+      └── trainval.txt
+    └── val/
+├── JPEGImages/
+├── SegmentationClass/
+
+```
+---
+
 python train.py \
     --mode full \
     --data_root ./data \
