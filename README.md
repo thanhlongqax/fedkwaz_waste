@@ -8,19 +8,6 @@
 ## 📐 Kiến trúc Hệ thống
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    FL SERVER (MLOps Hub)                         │
-│   ProxyModel (ResNet18) + KWAZ-Aware Aggregation                 │
-└──────────┬──────────────┬──────────────┬───────────────────────┘
-           │              │              │              │
-    ┌──────▼──┐    ┌──────▼──┐    ┌──────▼──┐    ┌──────▼──┐
-    │Client 0 │    │Client 1 │    │Client 2 │    │Client 3 │
-    │ZeroWaste│    │Spectral │    │  TACO   │    │MJU-Waste│
-    │ResNet-50│    │EffNet-B3│    │YOLO-Nano│    │MobileV3 │
-    │RGB 4K   │    │RGB+HSI  │    │Variable │    │RGBD     │
-    └─────────┘    └─────────┘    └─────────┘    └─────────┘
-         ↕ KWAZ Exchange (compressed, no raw data shared)
-
 ┌─────────────────────────────────────────────────────────────┐
 │                  FedKWAZ MLOps Hub                          │
 │                                                             │
