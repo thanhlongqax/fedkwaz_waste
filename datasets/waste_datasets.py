@@ -94,16 +94,16 @@ class ZeroWasteDataset(WasteBaseDataset):
 
         split_dir = base_dir / self.split / "data"
         ann_file = base_dir / self.split / "labels.json"
-        print("=" * 50)
-        print("ROOT      :", self.root)
-        print("BASE_DIR  :", base_dir)
-        print("SPLIT_DIR :", split_dir)
-        print("ANN_FILE  :", ann_file)
-        print("ROOT EXISTS     :", self.root.exists())
-        print("BASE EXISTS     :", base_dir.exists())
-        print("SPLIT EXISTS    :", split_dir.exists())
-        print("ANN EXISTS      :", ann_file.exists())
-        print("=" * 50)
+        # print("=" * 50)
+        # print("ROOT      :", self.root)
+        # print("BASE_DIR  :", base_dir)
+        # print("SPLIT_DIR :", split_dir)
+        # print("ANN_FILE  :", ann_file)
+        # print("ROOT EXISTS     :", self.root.exists())
+        # print("BASE EXISTS     :", base_dir.exists())
+        # print("SPLIT EXISTS    :", split_dir.exists())
+        # print("ANN EXISTS      :", ann_file.exists())
+        # print("=" * 50)
         if not split_dir.exists():
             raise FileNotFoundError(
                 f"ZeroWaste dataset không tìm thấy tại {self.root}\n"
@@ -208,68 +208,171 @@ class SpectralWasteDataset(WasteBaseDataset):
         self.hsi_bands = hsi_bands or list(range(self.HSI_CHANNELS))
         self.class_names = self.CLASS_NAMES
         super().__init__(root, split, img_size, **kwargs)
-
     def _load_data(self):
-        split_map = {"train": "train", "val": "val", "test": "test"}
-        split_dir = self.root / split_map.get(self.split, self.split)
 
-        if not split_dir.exists():
-            raise FileNotFoundError(
-                f"SpectralWaste không tìm thấy tại {self.root}\n"
-                f"Tải về tại: https://zenodo.org/records/10880544"
-            )
+        base_dir = self.root / "spectralwaste_segmentation"
 
-        ann_file = split_dir / "annotations.json"
-        rgb_dir = split_dir / "rgb"
-        hsi_dir = split_dir / "hsi"
+        rgb_dir = base_dir / "rgb" / self.split
+        hsi_dir = base_dir / "hyper" / self.split
+
+        rgb_mask_dir = base_dir / "labels_rgb" / self.split
+        hsi_mask_dir = base_dir / "labels_hyper_lt" / self.split
+
+        # print("=" * 60)
+        # print("ROOT      :", self.root)
+        # print("RGB DIR   :", rgb_dir)
+        # print("HSI DIR   :", hsi_dir)
+        # print("MASK RGB  :", rgb_mask_dir)
+        # print("MASK HSI  :", hsi_mask_dir)
+        # print("=" * 60)
 
         if not rgb_dir.exists():
-            rgb_dir = split_dir
+            raise FileNotFoundError(
+                f"Không tìm thấy RGB directory: {rgb_dir}"
+            )
 
-        img_files = sorted(rgb_dir.glob("*.jpg")) + sorted(rgb_dir.glob("*.png"))
+        img_files = []
 
-        if ann_file.exists():
-            with open(ann_file) as f:
-                coco_data = json.load(f)
-            self._parse_coco_spectral(coco_data, rgb_dir, hsi_dir)
-        else:
-            for img_path in img_files:
-                self.images.append(img_path)
-                hsi_path = hsi_dir / (img_path.stem + ".npy") if hsi_dir.exists() else None
-                self.annotations.append({
-                    "boxes": [], "labels": [], "masks": [],
-                    "hsi_path": str(hsi_path) if hsi_path and hsi_path.exists() else None,
-                })
+        for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif", "*.tiff"]:
+            img_files.extend(rgb_dir.glob(ext))
 
-    def _parse_coco_spectral(self, coco_data: Dict, rgb_dir: Path, hsi_dir: Path):
-        for img_info in coco_data["images"]:
-            rgb_path = rgb_dir / img_info["file_name"]
-            if not rgb_path.exists():
-                continue
+        img_files = sorted(img_files)
 
-            hsi_path = hsi_dir / (Path(img_info["file_name"]).stem + ".npy")
-            anns = [a for a in coco_data.get("annotations", [])
-                    if a["image_id"] == img_info["id"]]
+        self.images = []
+        self.annotations = []
 
-            self.images.append(rgb_path)
+        for img_path in img_files:
+
+            stem = img_path.stem
+
+            hsi_path = None
+
+            for ext in [".tif", ".tiff", ".npy"]:
+                candidate = hsi_dir / f"{stem}{ext}"
+
+                if candidate.exists():
+                    hsi_path = candidate
+                    break
+
+            rgb_mask = rgb_mask_dir / f"{stem}.png"
+            hsi_mask = hsi_mask_dir / f"{stem}.png"
+
+            self.images.append(img_path)
+
             self.annotations.append({
-                "boxes": [a["bbox"] for a in anns],
-                "labels": [a["category_id"] for a in anns],
-                "masks": [a.get("segmentation", []) for a in anns],
-                "hsi_path": str(hsi_path) if hsi_path.exists() else None,
+                "boxes": [],
+                "labels": [],
+                "masks": [],
+                "rgb_mask": str(rgb_mask) if rgb_mask.exists() else None,
+                "hsi_mask": str(hsi_mask) if hsi_mask.exists() else None,
+                "hsi_path": str(hsi_path) if hsi_path else None,
             })
+
+        print(f"Loaded {len(self.images)} SpectralWaste samples")
+    # def _load_data(self):
+    #     base_dir = self.root / "spectralwaste_segmentation"
+        
+    #     split_map = {"train": "train", "val": "val", "test": "test"}
+    #     split_dir = base_dir / split_map.get(self.split, self.split)
+    #     print("=" * 50)
+    #     print("ROOT      :", self.root)
+    #     print("BASE_DIR  :", base_dir)
+    #     print("SPLIT_DIR :", split_dir)
+    #     print("=" * 50)
+    #     if not split_dir.exists():
+    #         raise FileNotFoundError(
+    #             f"SpectralWaste không tìm thấy tại {self.root}\n"
+    #             f"Tải về tại: https://zenodo.org/records/10880544"
+    #         )
+
+    #     ann_file = split_dir / "annotations.json"
+    #     rgb_dir = split_dir / "rgb"
+    #     hsi_dir = split_dir / "hsi"
+
+    #     if not rgb_dir.exists():
+    #         rgb_dir = split_dir
+
+    #     img_files = sorted(rgb_dir.glob("*.jpg")) + sorted(rgb_dir.glob("*.png"))
+
+    #     if ann_file.exists():
+    #         with open(ann_file) as f:
+    #             coco_data = json.load(f)
+    #         self._parse_coco_spectral(coco_data, rgb_dir, hsi_dir)
+    #     else:
+    #         for img_path in img_files:
+    #             self.images.append(img_path)
+    #             hsi_path = hsi_dir / (img_path.stem + ".npy") if hsi_dir.exists() else None
+    #             self.annotations.append({
+    #                 "boxes": [], "labels": [], "masks": [],
+    #                 "hsi_path": str(hsi_path) if hsi_path and hsi_path.exists() else None,
+    #             })
+
+    # def _parse_coco_spectral(self, coco_data: Dict, rgb_dir: Path, hsi_dir: Path):
+    #     for img_info in coco_data["images"]:
+    #         rgb_path = rgb_dir / img_info["file_name"]
+    #         if not rgb_path.exists():
+    #             continue
+
+    #         hsi_path = hsi_dir / (Path(img_info["file_name"]).stem + ".npy")
+    #         anns = [a for a in coco_data.get("annotations", [])
+    #                 if a["image_id"] == img_info["id"]]
+
+    #         self.images.append(rgb_path)
+    #         self.annotations.append({
+    #             "boxes": [a["bbox"] for a in anns],
+    #             "labels": [a["category_id"] for a in anns],
+    #             "masks": [a.get("segmentation", []) for a in anns],
+    #             "hsi_path": str(hsi_path) if hsi_path.exists() else None,
+    #         })
 
     def _load_hsi(self, hsi_path: Optional[str]) -> Optional[torch.Tensor]:
         """Load hyperspectral image (H, W, C) → (C, H, W) tensor"""
-        if hsi_path is None or not Path(hsi_path).exists():
+        # if hsi_path is None or not Path(hsi_path).exists():
+        #     return None
+        # try:
+        #     hsi = np.load(hsi_path).astype(np.float32)  # (H, W, 224)
+        #     hsi = hsi[:, :, self.hsi_bands]               # Band selection
+        #     hsi = (hsi - hsi.min()) / (hsi.max() - hsi.min() + 1e-8)
+        #     hsi_tensor = torch.from_numpy(hsi).permute(2, 0, 1)  # (C, H, W)
+        #     return TF.resize(hsi_tensor, [self.img_size, self.img_size])
+        # except Exception:
+        #     return None
+    # def _load_hsi(self, hsi_path):
+
+        if hsi_path is None:
             return None
+
+        hsi_path = Path(hsi_path)
+
+        if not hsi_path.exists():
+            return None
+
         try:
-            hsi = np.load(hsi_path).astype(np.float32)  # (H, W, 224)
-            hsi = hsi[:, :, self.hsi_bands]               # Band selection
-            hsi = (hsi - hsi.min()) / (hsi.max() - hsi.min() + 1e-8)
-            hsi_tensor = torch.from_numpy(hsi).permute(2, 0, 1)  # (C, H, W)
-            return TF.resize(hsi_tensor, [self.img_size, self.img_size])
-        except Exception:
+
+            if hsi_path.suffix == ".npy":
+                hsi = np.load(hsi_path).astype(np.float32)
+
+            else:
+                hsi = tiff.imread(hsi_path).astype(np.float32)
+
+            if hsi.ndim == 3:
+                hsi = hsi[:, :, self.hsi_bands]
+
+            hsi = (hsi - hsi.min()) / (
+                hsi.max() - hsi.min() + 1e-8
+            )
+
+            hsi = torch.from_numpy(hsi).permute(2, 0, 1)
+
+            hsi = TF.resize(
+                hsi,
+                [self.img_size, self.img_size]
+            )
+
+            return hsi
+
+        except Exception as e:
+            print("HSI LOAD ERROR:", e)
             return None
     def _load_hsi(self, hsi_path):
         """Load hyperspectral image (H, W, C) → (C, H, W) tensor"""
@@ -657,11 +760,19 @@ class MJUWasteDataset(WasteBaseDataset):
                 self.img_size,
                 dtype=torch.long
             )
-
+        # tạo pseudo label từ mask
+        if mask_tensor.sum() > 0:
+            labels = torch.tensor([1], dtype=torch.long)
+        else:
+            labels = torch.tensor([0], dtype=torch.long)
         return {
             "image": image_tensor,
             "depth": depth_tensor,
             "mask": mask_tensor,
+            
+            "boxes": torch.zeros((0,4), dtype=torch.float32),
+
+            "labels": torch.tensor([1], dtype=torch.long),
             "image_path": str(img_path),
             "dataset": "mjuwaste",
             "camera_type": self.CAMERA_TYPE,

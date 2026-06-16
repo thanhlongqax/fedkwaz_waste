@@ -1,13 +1,21 @@
 """
-Federated Learning Server
-==========================
-Server quản lý quá trình FL:
-- Proxy model training & distribution
-- Model aggregation (FedAvg, FedProx, SCAFFOLD)
-- KWAZ-aware aggregation (Novel)
-- Global evaluation
-"""
+FedKWAZ Prototype Server
+========================
 
+Server trung tâm cho Federated Learning dị thể.
+
+Chức năng:
+- Train Proxy Model trên Proxy Dataset
+- Thu thập Knowledge Packets từ Clients
+- KWAZ-aware Prototype Aggregation
+- Broadcast Global Prototype
+- Global Evaluation & Monitoring
+
+Lưu ý:
+Không thực hiện Weight Aggregation.
+Tri thức được trao đổi thông qua Prototype Space
+để hỗ trợ Heterogeneous Federated Learning.
+"""
 import copy
 import torch
 import torch.nn as nn
@@ -24,15 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 class FedKWAZServer:
-    """
-    FL Server cho hệ thống quản lý rác thải đa nhà máy
-    Thực hiện:
-    1. Train & phân phối proxy model
-    2. Thu thập và tổng hợp model updates từ clients
-    3. KWAZ-aware weighted aggregation
-    4. Global evaluation
-    """
 
+    """
+    FedKWAZ Prototype Server
+
+    Pipeline mỗi round:
+
+    1. Train Proxy Model
+    2. Phân phối Proxy Knowledge
+    3. Client Local Training
+    4. Thu thập Knowledge Packets
+    5. Aggregate Global Prototype
+    6. Broadcast Prototype Bank
+    7. Evaluate & Monitor
+    """
     def __init__(
         self,
         proxy_model: nn.Module,
@@ -54,7 +67,7 @@ class FedKWAZServer:
         self.current_round = 0
         self.best_global_acc = 0.0
         self.history: List[Dict] = []
-
+        self.prototype_bank = None
         # Proxy optimizer
         self.proxy_optimizer = optim.AdamW(
             self.proxy_model.parameters(),
@@ -130,70 +143,200 @@ class FedKWAZServer:
                 aggregated[key] = ref_state[key]
 
         return aggregated
+    # def aggregate_prototypes(self, client_updates):
 
-    def kwaz_aware_aggregate(
-        self,
-        client_updates: List[Tuple[Dict, Dict]],
-    ) -> Dict:
+    #     all_proto = []
+    #     weights = []
+
+    #     for packet, stats in client_updates:
+
+    #         all_proto.append(
+    #             packet["feature_prototypes"].to(self.device)
+    #         )
+
+    #         weights.append(
+    #             packet["num_samples"]
+    #         )
+
+    #     weights = np.array(weights)
+    #     weights = weights / weights.sum()
+
+    #     global_proto = torch.zeros_like(all_proto[0])
+
+    #     for w, p in zip(weights, all_proto):
+    #         global_proto += float(w) * p
+
+    #     return global_proto
+    def aggregate_prototypes(self, client_updates):
         """
-        KWAZ-aware aggregation: Clients với KWAZ loss thấp hơn
-        (đã học tốt hơn) nhận weight cao hơn trong aggregation
-        Novel contribution: kết hợp sample count + learning quality
+        Aggregate prototype vectors từ các client.
+
+        client_updates:
+        [
+            (knowledge_packet, stats),
+            ...
+        ]
         """
-        if not client_updates:
-            return self.global_model.state_dict()
 
-        total_samples = sum(s["num_samples"] for _, s in client_updates)
-        sample_weights = np.array([s["num_samples"] / total_samples for _, s in client_updates])
+        if len(client_updates) == 0:
+            return None
 
-        # Quality weight: inverse KWAZ loss (lower KWAZ = better learned)
-        kwaz_losses = np.array([
-            s.get("avg_kwaz_loss", 1.0) for _, s in client_updates
+        # ==================================================
+        # Sample Importance
+        # Client có nhiều dữ liệu hơn đóng góp nhiều hơn
+        # ==================================================
+
+        total_samples = sum(
+            stats["num_samples"]
+            for _, stats in client_updates
+        )
+
+        sample_weights = np.array([
+            stats["num_samples"] / total_samples
+            for _, stats in client_updates
         ])
-        # Softmax inverse
+
+        # ==================================================
+        # Learning Quality Weight
+        # KWAZ loss càng thấp => Prototype càng đáng tin cậy
+        # ==================================================
+
+        kwaz_losses = np.array([
+            stats.get("avg_kwaz_loss", 1.0)
+            for _, stats in client_updates
+        ])
+
         inv_kwaz = 1.0 / (kwaz_losses + 1e-8)
+
         quality_weights = inv_kwaz / inv_kwaz.sum()
 
-        # Camera diversity bonus: clients với camera khác biệt nhận bonus
-        camera_types = [s.get("camera_type", "unknown") for _, s in client_updates]
-        unique_cameras = len(set(camera_types))
+        # ==================================================
+        # Sensor Diversity Weight
+        # Khuyến khích các nguồn camera hiếm
+        # đóng góp nhiều hơn vào Prototype Bank
+        # ==================================================
+
+        camera_types = [
+            stats.get("camera_type", "unknown")
+            for _, stats in client_updates
+        ]
+
         camera_bonus = np.ones(len(client_updates))
-        if unique_cameras > 1:
+
+        if len(set(camera_types)) > 1:
+
             for i, cam in enumerate(camera_types):
-                # Rare camera type nhận bonus cao hơn
+
                 count = camera_types.count(cam)
+
                 camera_bonus[i] = 1.0 / count
+
             camera_bonus = camera_bonus / camera_bonus.sum()
 
-        # Final weights: 50% sample + 30% quality + 20% camera diversity
+        # ==================================================
+        # Hybrid Prototype Weight
+        # 50% Sample
+        # 30% Learning Quality
+        # 20% Sensor Diversity
+        # ==================================================
+
         final_weights = (
             0.5 * sample_weights +
             0.3 * quality_weights +
             0.2 * camera_bonus
         )
+
         final_weights = final_weights / final_weights.sum()
 
-        # Aggregate
-        aggregated = {}
-        ref_state = client_updates[0][0]
+        # ==================================================
+        # Aggregate Prototype
+        # ==================================================
 
-        for key in ref_state.keys():
-            if ref_state[key].dtype in [torch.float32, torch.float16, torch.float64]:
-                aggregated[key] = torch.zeros_like(ref_state[key])
-                for i, (state_dict, _) in enumerate(client_updates):
-                    if key in state_dict and state_dict[key].shape == aggregated[key].shape:
-                        aggregated[key] += final_weights[i] * state_dict[key].float()
-            else:
-                aggregated[key] = ref_state[key]
+        proto_dim = client_updates[0][0]["feature_prototypes"].shape[0]
+
+        global_proto = torch.zeros(
+            proto_dim,
+            device=self.device
+        )
+
+        for i, (packet, stats) in enumerate(client_updates):
+
+            proto = packet["feature_prototypes"].to(self.device)
+
+            global_proto += final_weights[i] * proto
 
         logger.info(
-            f"🔀 KWAZ-aware aggregation | Weights: "
+            "🧠 Prototype aggregation | "
             + " | ".join([
                 f"{client_updates[i][1]['client_id']}: {final_weights[i]:.3f}"
                 for i in range(len(client_updates))
             ])
         )
-        return aggregated
+
+        return global_proto
+    # def kwaz_aware_aggregate(
+    #     self,
+    #     client_updates: List[Tuple[Dict, Dict]],
+    # ) -> Dict:
+    #     """
+    #     KWAZ-aware aggregation: Clients với KWAZ loss thấp hơn
+    #     (đã học tốt hơn) nhận weight cao hơn trong aggregation
+    #     Novel contribution: kết hợp sample count + learning quality
+    #     """
+    #     if not client_updates:
+    #         return self.global_model.state_dict()
+
+    #     total_samples = sum(s["num_samples"] for _, s in client_updates)
+    #     sample_weights = np.array([s["num_samples"] / total_samples for _, s in client_updates])
+
+    #     # Quality weight: inverse KWAZ loss (lower KWAZ = better learned)
+    #     kwaz_losses = np.array([
+    #         s.get("avg_kwaz_loss", 1.0) for _, s in client_updates
+    #     ])
+    #     # Softmax inverse
+    #     inv_kwaz = 1.0 / (kwaz_losses + 1e-8)
+    #     quality_weights = inv_kwaz / inv_kwaz.sum()
+
+    #     # Camera diversity bonus: clients với camera khác biệt nhận bonus
+    #     camera_types = [s.get("camera_type", "unknown") for _, s in client_updates]
+    #     unique_cameras = len(set(camera_types))
+    #     camera_bonus = np.ones(len(client_updates))
+    #     if unique_cameras > 1:
+    #         for i, cam in enumerate(camera_types):
+    #             # Rare camera type nhận bonus cao hơn
+    #             count = camera_types.count(cam)
+    #             camera_bonus[i] = 1.0 / count
+    #         camera_bonus = camera_bonus / camera_bonus.sum()
+
+    #     # Final weights: 50% sample + 30% quality + 20% camera diversity
+    #     final_weights = (
+    #         0.5 * sample_weights +
+    #         0.3 * quality_weights +
+    #         0.2 * camera_bonus
+    #     )
+    #     final_weights = final_weights / final_weights.sum()
+
+    #     # Aggregate
+    #     aggregated = {}
+    #     ref_state = client_updates[0][0]
+
+    #     for key in ref_state.keys():
+    #         if ref_state[key].dtype in [torch.float32, torch.float16, torch.float64]:
+    #             aggregated[key] = torch.zeros_like(ref_state[key])
+    #             for i, (state_dict, _) in enumerate(client_updates):
+    #                 if key in state_dict and state_dict[key].shape == aggregated[key].shape:
+    #                     aggregated[key] += final_weights[i] * state_dict[key].float()
+    #         else:
+    #             aggregated[key] = ref_state[key]
+
+    #     logger.info(
+    #         f"🔀 KWAZ-aware aggregation | Weights: "
+    #         + " | ".join([
+    #             f"{client_updates[i][1]['client_id']}: {final_weights[i]:.3f}"
+    #             for i in range(len(client_updates))
+    #         ])
+    #     )
+    #     return aggregated
 
     def broadcast_global_model(self, client_model: nn.Module) -> nn.Module:
         """
@@ -240,43 +383,60 @@ class FedKWAZServer:
         # Step 1: Update proxy model
         proxy_loss = self.train_proxy(num_epochs=1)
 
-        # Step 2: Collect updates from all clients
+        # Step 2: Collect Knowledge Packets from Clients
         client_updates = []
         for client in clients:
             logger.info(f"  → Training {client.client_id} ({client.dataset_name})...")
 
-            # Distribute current proxy
-            proxy_copy = copy.deepcopy(self.proxy_model)
-
+            # # Distribute current proxy
+            # proxy_copy = copy.deepcopy(self.proxy_model)
+            proxy_copy = self.proxy_model
             # Local training
             state_dict, stats = client.local_train(
                 proxy_model=proxy_copy,
                 current_round=self.current_round,
             )
 
-            # Optional compression
-            if self.cfg.enable_compression:
-                state_dict = client.compress_model_update(state_dict)
-                state_dict = client.decompress_model_update(state_dict)
+            # # Optional compression
+            # if self.cfg.enable_compression:
+            #     state_dict = client.compress_model_update(state_dict)
+            #     state_dict = client.decompress_model_update(state_dict)
 
             client_updates.append((state_dict, stats))
+            
 
-        # Step 3: Aggregation
-        if use_kwaz_aggregation:
-            aggregated_state = self.kwaz_aware_aggregate(client_updates)
-        else:
-            aggregated_state = self.fedavg_aggregate(client_updates)
+        # # Step 3: Aggregation
+        # if use_kwaz_aggregation:
+        #     aggregated_state = self.kwaz_aware_aggregate(client_updates)
+        # else:
+        #     aggregated_state = self.fedavg_aggregate(client_updates)
 
-        # Update global model (với state dict từ first client làm reference shape)
-        try:
-            self.global_model.load_state_dict(aggregated_state, strict=False)
-        except Exception as e:
-            logger.warning(f"Global model update warning: {e}")
+        # # Update global model (với state dict từ first client làm reference shape)
+        # try:
+        #     self.global_model.load_state_dict(aggregated_state, strict=False)
+        # except Exception as e:
+        #     logger.warning(f"Global model update warning: {e}")
 
-        # Step 4: Broadcast updated global knowledge to clients
+        # Step 3: Build Global Prototype Bank
+        self.prototype_bank = self.aggregate_prototypes(
+            client_updates
+        )
+
+        logger.info(
+            f"🧠 Prototype bank updated "
+            f"| Shape: {self.prototype_bank.shape}"
+        )
+        # Step 4: Broadcast Global Prototype
+        # Client sử dụng Prototype Distillation
+        # trong vòng train tiếp theo
         for client in clients:
-            client.model = self.broadcast_global_model(client.model)
-
+            # client.model = self.broadcast_global_model(client.model)
+            client.receive_global_prototype(
+                self.prototype_bank
+            )
+            client.monitor_prediction(
+                    round_num=self.current_round
+                )
         # Step 5: Evaluate
         round_metrics = {}
         if self.current_round % self.cfg.eval_every == 0:
@@ -311,30 +471,58 @@ class FedKWAZServer:
             f"⏱ Round {self.current_round} completed in {round_time:.1f}s"
         )
         return round_summary
-
-    # ── Checkpointing ─────────────────────────────────────────────────────────
-
+    # Prototype Checkpointing
+    # Lưu trạng thái Federated Knowledge
     def save_checkpoint(self, filename: str = "checkpoint.pt"):
         checkpoint = {
             "round": self.current_round,
-            "global_model_state": self.global_model.state_dict(),
-            "proxy_model_state": self.proxy_model.state_dict(),
-            "best_acc": self.best_global_acc,
-            "history": self.history,
+
+            "prototype_bank":
+                self.prototype_bank,
+
+            "best_acc":
+                self.best_global_acc,
+
+            "history":
+                self.history
         }
         path = self.output_dir / filename
         torch.save(checkpoint, path)
         logger.info(f"💾 Checkpoint saved: {path}")
 
+    # def load_checkpoint(self, path: str):
+    #     checkpoint = torch.load(path, map_location=self.device)
+    #     self.current_round = checkpoint["round"]
+    #     self.global_model.load_state_dict(checkpoint["global_model_state"], strict=False)
+    #     self.proxy_model.load_state_dict(checkpoint["proxy_model_state"], strict=False)
+    #     self.best_global_acc = checkpoint["best_acc"]
+    #     self.history = checkpoint.get("history", [])
+    #     logger.info(f"📂 Checkpoint loaded from round {self.current_round}")
     def load_checkpoint(self, path: str):
-        checkpoint = torch.load(path, map_location=self.device)
-        self.current_round = checkpoint["round"]
-        self.global_model.load_state_dict(checkpoint["global_model_state"], strict=False)
-        self.proxy_model.load_state_dict(checkpoint["proxy_model_state"], strict=False)
-        self.best_global_acc = checkpoint["best_acc"]
-        self.history = checkpoint.get("history", [])
-        logger.info(f"📂 Checkpoint loaded from round {self.current_round}")
 
+        checkpoint = torch.load(
+            path,
+            map_location=self.device
+        )
+
+        self.current_round = checkpoint["round"]
+
+        self.prototype_bank = checkpoint.get(
+            "prototype_bank",
+            None
+        )
+
+        self.best_global_acc = checkpoint["best_acc"]
+
+        self.history = checkpoint.get(
+            "history",
+            []
+        )
+
+        logger.info(
+            f"📂 Prototype checkpoint loaded "
+            f"from round {self.current_round}"
+        )
     def save_history(self, filename: str = "training_history.json"):
         path = self.output_dir / filename
         # Convert tensors to Python types for JSON serialization

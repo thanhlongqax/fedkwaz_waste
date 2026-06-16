@@ -286,7 +286,7 @@ class NanoWasteDetector(WasteClientModel):
 
         # Neck (lightweight FPN)
         self.neck_up = nn.Sequential(conv_bn(256, 128, 1, 1, 0), nn.Upsample(scale_factor=2))
-        self.neck_fuse = conv_bn(256, 256, 3)
+        self.neck_fuse = conv_bn(384, 256, 3)
 
         # Head
         self.head = nn.Sequential(

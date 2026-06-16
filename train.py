@@ -18,7 +18,7 @@ import torch
 import numpy as np
 import random
 from pathlib import Path
-
+from utils.monitor_plot import plot_monitor_history
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -34,7 +34,11 @@ from client.fl_client import FedKWAZClient
 from server.fl_server import FedKWAZServer
 from utils.visualization import plot_training_curves, print_round_summary
 from utils.metrics import compute_per_class_metrics
-
+from utils.visualization import (
+    plot_training_curves,
+    print_round_summary,
+    create_attention_progress_figure
+)
 
 # ─── Logging Setup ───────────────────────────────────────────────────────────
 
@@ -80,11 +84,21 @@ def build_clients(
     }
 
     for client_id, dataset_name in CLIENT_DATASET_MAP.items():
+        
+        # Chỉ chạy client_3 để debug TACO
+        # if client_id != "client_3":
+        #     continue
         model_name = CLIENT_MODEL_MAP[client_id]
         num_classes = dataset_num_classes.get(dataset_name, 4)
 
         logger.info(f"\n📦 Building {client_id} | Dataset: {dataset_name} | Model: {model_name}")
-
+        print("="*60)
+        print("CLIENT_ID:", client_id)
+        print("DATASET_NAME:", dataset_name)
+        print("MODEL_NAME:", model_name)
+        print("NUM_CLASSES:", num_classes)
+        # print("REGISTRY_KEYS:", list(dataset_num_classes.keys()))
+        print("="*60)
         # Build model
         model_kwargs = {}
         if model_name == "efficientnet_b3":
@@ -137,7 +151,9 @@ def build_clients(
             train_ds,
             batch_size=fl_cfg.local_batch_size,
             shuffle=True,
-            num_workers=0,  # 0 for demo mode compatibility
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True, # 0 for demo mode compatibility
             collate_fn=collate_fn,
             drop_last=True,
         )
@@ -145,7 +161,9 @@ def build_clients(
             val_ds,
             batch_size=fl_cfg.local_batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=4,
+            pin_memory=True,
+            persistent_workers=True,
             collate_fn=collate_fn,
         )
 
@@ -157,8 +175,11 @@ def build_clients(
             val_loader=val_loader,
             cfg=fl_cfg,
             device=device,
+            output_dir=train_cfg.output_dir,
         )
         clients.append(client)
+        client.monitor_image = train_ds[0]
+        client.save_monitor_image()
         logger.info(f"  ✅ {client_id} ready")
 
     return clients
@@ -222,7 +243,9 @@ def train(args):
         proxy_ds,
         batch_size=fl_cfg.local_batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True,
         collate_fn=simple_collate,
     )
 
@@ -268,6 +291,14 @@ def train(args):
     # Plot curves
     plot_training_curves(server.history, output_dir=train_cfg.output_dir)
     logger.info(f"\n🏁 Training complete! Best accuracy: {server.best_global_acc:.4f}")
+    plot_monitor_history( Path(train_cfg.output_dir) / "monitor")
+    for client in clients:
+        create_attention_progress_figure(
+            monitor_dir=Path(train_cfg.output_dir) / "monitor",
+            client_id=client.client_id,
+            first_round=1,
+            last_round=fl_cfg.num_rounds
+        )
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────

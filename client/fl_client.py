@@ -15,7 +15,10 @@ from torch.utils.data import DataLoader
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import logging
-
+from pathlib import Path
+from PIL import Image
+import json
+import matplotlib.pyplot as plt
 from fedkwaz.kwaz_core import (
     KWAZDetector, HierarchicalAdaptivePatchMixing,
     KnowledgeDiscrepancyPerceptron, FedKWAZLoss
@@ -75,6 +78,7 @@ class FedKWAZClient:
         val_loader: DataLoader,
         cfg,  # FedKWAZConfig
         device: torch.device,
+        output_dir="./outputs",   # thêm
     ):
         self.client_id = client_id
         self.dataset_name = dataset_name
@@ -83,7 +87,10 @@ class FedKWAZClient:
         self.val_loader = val_loader
         self.cfg = cfg
         self.device = device
-
+        # Global prototype được server tổng hợp từ tất cả clients.
+        # Client sẽ dùng prototype này để regularize feature space
+        # nhằm giảm Feature Heterogeneity giữa các dataset khác nhau.
+        self.global_prototype = None
         # Camera metadata
         self.camera_meta = CAMERA_META_REGISTRY.get(dataset_name, {})
 
@@ -117,7 +124,21 @@ class FedKWAZClient:
         # Training stats
         self.round_stats: List[Dict] = []
         self.best_metric = 0.0
+        # Monitoring sample:
+        # Lưu cố định 1 ảnh đại diện của client.
+        # Ảnh này được predict sau mỗi FL round để theo dõi
+        # sự thay đổi confidence và prediction theo thời gian.
+        self.monitor_image = None
+        self.monitor_history = []
+        
+        #lưu ảnh vào monitor
+        self.output_dir = Path(output_dir)
+        self.monitor_dir = self.output_dir / "monitor"
 
+        self.monitor_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
     def _build_optimizer(self) -> optim.Optimizer:
         all_params = (
             list(self.model.parameters()) +
@@ -130,7 +151,23 @@ class FedKWAZClient:
             weight_decay=1e-4,
             betas=(0.9, 0.999),
         )
+    def receive_global_prototype(self, prototype):
+        """
+            Nhận Global Prototype từ FL Server.
 
+            Global Prototype được tổng hợp từ:
+            - ZeroWaste
+            - SpectralWaste
+            - TACO
+            - MJU-Waste
+
+            Mục tiêu:
+            Giảm feature drift giữa các domain khác nhau.
+        """
+        if prototype is None:
+            return
+
+        self.global_prototype = prototype.to(self.device)
     def _get_pseudo_targets(self, batch: Dict) -> torch.Tensor:
         """Tạo pseudo labels từ batch (sử dụng object count hoặc dominant class)"""
         labels_list = batch["labels"]
@@ -143,15 +180,130 @@ class FedKWAZClient:
             else:
                 pseudo.append(0)  # background
         return torch.tensor(pseudo, dtype=torch.long, device=self.device)
+    @torch.no_grad()
+    def extract_feature_prototypes(self):
+        """
+        Trích xuất Feature Prototype của client.
 
+        Prototype = trung bình Global Feature
+        trên tập validation.
+
+        Đây là Knowledge Packet được gửi lên server
+        thay cho việc gửi toàn bộ model parameters.
+        """
+        self.model.eval()
+
+        proto_list = []
+
+        for batch in self.val_loader:
+
+            images = batch["images"].to(self.device)
+
+            if self.dataset_name == "spectralwaste-segmentation":
+                out = self.model(
+                    images,
+                    hsi=batch["meta"]["hsi"].to(self.device)
+                )
+
+            elif self.dataset_name == "mju-waste":
+                out = self.model(
+                    images,
+                    depth=batch["meta"]["depth"].to(self.device)
+                )
+
+            else:
+                out = self.model(images)
+
+            proto_list.append(
+                out["global_feat"].mean(0)
+            )
+
+            if len(proto_list) >= 20:
+                break
+
+        return torch.stack(proto_list).mean(0).cpu()
+    def init_monitor_image(self):
+
+        sample = self.train_loader.dataset[0]
+
+        self.monitor_image = {}
+
+        self.monitor_image["image"] = sample["image"]
+
+        if "hsi" in sample:
+            self.monitor_image["hsi"] = sample["hsi"]
+
+        if "depth" in sample:
+            self.monitor_image["depth"] = sample["depth"]
+    @torch.no_grad()
+    def extract_class_centers(self):
+        """
+        Tính Class Centers.
+
+        Mỗi class sẽ có:
+        center_c = mean(feature_c)
+
+        Giúp server hiểu cấu trúc semantic
+        của từng client mà không cần truy cập dữ liệu gốc.
+        """
+        self.model.eval()
+
+        centers = {}
+
+        for batch in self.val_loader:
+
+            images = batch["images"].to(self.device)
+
+            targets = self._get_pseudo_targets(batch)
+
+            if self.dataset_name == "spectralwaste-segmentation":
+                out = self.model(
+                    images,
+                    hsi=batch["meta"]["hsi"].to(self.device)
+                )
+
+            elif self.dataset_name == "mju-waste":
+                out = self.model(
+                    images,
+                    depth=batch["meta"]["depth"].to(self.device)
+                )
+
+            else:
+                out = self.model(images)
+
+            feats = out["global_feat"]
+
+            for cls in targets.unique():
+
+                cls = int(cls.item())
+
+                mask = targets == cls
+
+                if mask.sum() == 0:
+                    continue
+
+                centers[cls] = feats[mask].mean(0).cpu()
+
+            break
+
+        return centers
     def local_train(
         self,
         proxy_model: nn.Module,
         current_round: int,
     ) -> Tuple[Dict, Dict]:
         """
-        Thực hiện local training với FedKWAZ mutual learning
-        Returns: (model_state_dict, training_stats)
+        Local Training Phase
+
+        1. Nhận Proxy Model từ server
+        2. Forward local model
+        3. KWAZ discrepancy detection
+        4. Knowledge Distillation
+        5. Prototype Alignment
+        6. Update local weights
+
+        Cuối round:
+        Trả về Knowledge Packet thay vì state_dict.
         """
         proxy_model = proxy_model.to(self.device)
         proxy_model.eval()  # Proxy model cố định trong local training
@@ -176,10 +328,10 @@ class FedKWAZClient:
 
                 # ── Forward pass ──────────────────────────────────
                 # Private model (local)
-                if self.dataset_name == "spectralwaste" and "hsi" in batch.get("meta", {}):
+                if self.dataset_name == "spectralwaste-segmentation" and "hsi" in batch.get("meta", {}):
                     hsi = batch["meta"]["hsi"].to(self.device)
                     private_out = self.model(images, hsi=hsi)
-                elif self.dataset_name == "mjuwaste" and "depth" in batch.get("meta", {}):
+                elif self.dataset_name == "mju-waste" and "depth" in batch.get("meta", {}):
                     depth = batch["meta"]["depth"].to(self.device)
                     private_out = self.model(images, depth=depth)
                 else:
@@ -188,7 +340,14 @@ class FedKWAZClient:
                 # Proxy model (server-side)
                 with torch.no_grad():
                     proxy_out = proxy_model(images)
-
+                # KWAZ phát hiện các mẫu dữ liệu có mức độ
+                # Knowledge Discrepancy cao giữa:
+                #
+                # - Local Model
+                # - Proxy Model
+                #
+                # Các mẫu này được xem là khó học hoặc
+                # có Domain Shift mạnh.
                 # ── KWAZ Detection ────────────────────────────────
                 kwaz_result = self.kwaz_detector(
                     private_out, proxy_out,
@@ -196,7 +355,6 @@ class FedKWAZClient:
                 )
 
                 # ── HAPM: Generate mixed samples ──────────────────
-                # Chỉ áp dụng HAPM khi có đủ KWAZ samples
                 if kwaz_result["kwaz_mask"].any():
                     all_mixed = self.hapm(images, images, kwaz_result["kwaz_score"])
 
@@ -220,13 +378,55 @@ class FedKWAZClient:
                         kdp_result = {"kdp_loss": torch.tensor(0.0, device=self.device)}
                 else:
                     kdp_result = {"kdp_loss": torch.tensor(0.0, device=self.device)}
+                # DEBUG CLASS MISMATCH
+                num_classes = private_out["logits"].shape[1]
 
+                if targets.max() >= num_classes:
+                    print("=" * 80)
+                    print("CLIENT:", self.client_id)
+                    print("DATASET:", self.dataset_name)
+                    print("NUM_CLASSES:", num_classes)
+                    print("TARGET_MAX:", targets.max().item())
+                    print("TARGET_MIN:", targets.min().item())
+                    print("UNIQUE_TARGETS:", torch.unique(targets))
+                    raise ValueError("Target vượt quá số class của model")
                 # ── Compute Loss ──────────────────────────────────
                 losses = self.criterion(
                     private_out, proxy_out,
                     targets, kwaz_result, kdp_result
                 )
+                # Prototype Alignment Loss
+                #
+                # Ép feature của client tiến gần
+                # Global Prototype của toàn hệ thống.
+                #
+                # Đây là cơ chế giảm Statistical Heterogeneity
+                # giữa các dataset khác nhau.
+                if self.global_prototype is not None:
 
+                    # proto_loss = nn.functional.mse_loss(
+                    #     private_out["global_feat"],
+                    #     self.global_prototype.unsqueeze(0).expand(
+                    #         private_out["global_feat"].shape[0],
+                    #         -1
+                    #     )
+                    # )
+                    global_proto = (
+                        self.global_prototype
+                        .detach()
+                        .unsqueeze(0)
+                        .expand(
+                            private_out["global_feat"].shape[0],
+                            -1
+                        )
+                    )
+
+                    proto_loss = nn.functional.mse_loss(
+                        private_out["global_feat"],
+                        global_proto
+                    )
+
+                    losses["total"] += 0.1 * proto_loss
                 # ── Backward ──────────────────────────────────────
                 optimizer.zero_grad()
                 losses["total"].backward()
@@ -270,9 +470,77 @@ class FedKWAZClient:
             f"Loss: {final_stats['avg_total_loss']:.4f} | "
             f"Camera: {self.camera_meta.get('camera_name', 'N/A')}"
         )
+        # ------------------------------------------------------------------
+        # Knowledge Packet
+        #
+        # Thay vì gửi model weights lên server,
+        # mỗi client chỉ gửi knowledge-level information:
+        #
+        # - Feature Prototypes
+        # - Class Centers
+        # - KWAZ Statistics
+        # - Camera Metadata
+        #
+        # Giảm communication cost
+        # và hỗ trợ Heterogeneous Federated Learning.
+        # ------------------------------------------------------------------
+        knowledge_packet = {
+            "feature_prototypes": self.extract_feature_prototypes(),
+            "class_centers": self.extract_class_centers(),
+            "kwaz_statistics": {
+                "avg_kwaz_loss": final_stats["avg_kwaz_loss"],
+                "avg_kdp_loss": final_stats["avg_kdp_loss"],
+            },
+            "camera_meta": self.camera_meta,
+            "num_samples": final_stats["num_samples"],
+        }
+        # ==============================================================
+        # FedKWAZ Knowledge Communication
+        #
+        # Traditional FL:
+        #    Client -> state_dict -> Server
+        #
+        # FedKWAZ:
+        #    Client -> Knowledge Packet -> Server
+        #
+        # Knowledge Packet gồm:
+        #    Feature Prototypes
+        #    Class Centers
+        #    KWAZ Statistics
+        #    Camera Metadata
+        #
+        # Điều này giúp hỗ trợ:
+        #    - Model Heterogeneity
+        #    - Data Heterogeneity
+        #    - Camera Heterogeneity
+        #
+        # và giảm đáng kể communication overhead.
+        # ==============================================================
+        return knowledge_packet, final_stats
+    #hàm lưu ảnh history 
+    def save_monitor_image(self):
+        """
+        Lưu ảnh monitor của client.
 
-        return copy.deepcopy(self.model.state_dict()), final_stats
+        Mỗi client chỉ lưu duy nhất 1 ảnh đại diện.
+        Ảnh này được sử dụng xuyên suốt quá trình training
+        để đánh giá sự ổn định của model.
+        """
+        if self.monitor_image is None:
+            return
 
+        save_path = self.monitor_dir / f"{self.client_id}.jpg"
+
+        img = self.monitor_image["image"].cpu()
+
+        img = img.permute(1,2,0).numpy()
+
+        img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+
+        img = (img * 255).astype(np.uint8)
+        Image.fromarray(img).save(save_path)
+
+        logger.info(f"📸 Saved monitor image -> {save_path}")
     @torch.no_grad()
     def evaluate(self) -> Dict:
         """Đánh giá model trên validation set"""
@@ -306,7 +574,122 @@ class FedKWAZClient:
             "accuracy": accuracy,
             "num_eval_samples": total_samples,
         }
+    @torch.no_grad()
+    def monitor_prediction(self, round_num):
+        """
+        Predict trên ảnh monitor cố định.
 
+        Mục đích:
+        Theo dõi sự tiến hóa của model qua từng FL round.
+
+        Output:
+        - Prediction
+        - Confidence
+        - Loss
+
+        Lưu vào:
+        monitor/client_x_history.json
+        """
+        if self.monitor_image is None:
+            return
+
+        self.model.eval()
+
+        image = self.monitor_image["image"].unsqueeze(0).to(self.device)
+
+        if self.dataset_name == "spectralwaste-segmentation":
+            hsi = self.monitor_image["hsi"].unsqueeze(0).to(self.device)
+            out = self.model(image, hsi=hsi)
+
+        elif self.dataset_name == "mju-waste":
+            depth = self.monitor_image["depth"].unsqueeze(0).to(self.device)
+            out = self.model(image, depth=depth)
+
+        else:
+            out = self.model(image)
+
+        # ==================================================
+        # Activation Map
+        # ==================================================
+
+        feat_map = out["raw_feat"]
+
+        activation = feat_map.mean(dim=1)
+
+        activation = torch.nn.functional.interpolate(
+            activation.unsqueeze(1),
+            size=image.shape[-2:],
+            mode="bilinear",
+            align_corners=False
+        ).squeeze()
+
+        activation = activation.cpu().numpy()
+
+        activation = (
+            activation - activation.min()
+        ) / (
+            activation.max() - activation.min() + 1e-8
+        )
+        probs = torch.softmax(out["logits"], dim=1)
+
+        pred = probs.argmax(dim=1).item()
+        conf = probs.max().item()
+
+        rgb = image[0].permute(1, 2, 0).cpu().numpy()
+
+        rgb = (
+            rgb - rgb.min()
+        ) / (
+            rgb.max() - rgb.min() + 1e-8
+        )
+        # Lưu ảnh gốc chỉ 1 lần
+        if round_num == 1:
+            plt.imsave(
+                self.monitor_dir /
+                f"{self.client_id}_input.png",
+                rgb
+            )
+        plt.figure(figsize=(5,5))
+
+        plt.imshow(rgb)
+
+        plt.imshow(
+            activation,
+            cmap="jet",
+            alpha=0.5
+        )
+
+        plt.axis("off")
+
+        plt.savefig(
+            self.monitor_dir /
+            f"{self.client_id}_round_{round_num}.png",
+            bbox_inches="tight"
+        )
+
+        plt.close()
+        self.monitor_history.append({
+            "round": round_num,
+            "prediction": pred,
+            "confidence": conf,
+            "loss": float(
+                self.round_stats[-1]["avg_total_loss"]
+            )
+        })
+        history_file = self.monitor_dir / f"{self.client_id}_history.json"
+
+        with open(history_file, "w") as f:
+            json.dump(
+                self.monitor_history,
+                f,
+                indent=2
+            )
+        logger.info(
+            f"📸 [{self.client_id}] "
+            f"Round={round_num} "
+            f"Pred={pred} "
+            f"Conf={conf:.4f}"
+        )
     def compress_model_update(self, state_dict: Dict) -> Dict:
         """
         Model compression để giảm băng thông mạng

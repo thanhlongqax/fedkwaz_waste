@@ -97,6 +97,7 @@ def plot_training_curves(history: List[Dict], output_dir: str = "./outputs"):
     ax.set_title("KWAZ Loss (Knowledge Alignment)", fontweight="bold")
     ax.set_xlabel("FL Round")
     ax.set_ylabel("KWAZ Loss")
+    ax.plot(losses, label="Loss")
     ax.legend(fontsize=7)
     ax.grid(True, alpha=0.3)
     ax.set_facecolor("#f8f9fa")
@@ -242,3 +243,63 @@ def compute_per_class_metrics(preds: list, targets: list, class_names: List[str]
         metrics[name] = correct / max(total, 1)
 
     return metrics
+
+def create_attention_progress_figure(
+    monitor_dir,
+    client_id,
+    first_round=1,
+    last_round=100
+):
+    """
+    Tạo figure:
+
+    (a) Input Image
+    (b) Activation Map Round 1
+    (c) Activation Map Round N
+    """
+
+    monitor_dir = Path(monitor_dir)
+
+    input_img = monitor_dir / f"{client_id}_input.png"
+    round1_img = monitor_dir / f"{client_id}_round_{first_round}.png"
+    roundN_img = monitor_dir / f"{client_id}_round_{last_round}.png"
+
+    if not (
+        input_img.exists()
+        and round1_img.exists()
+        and roundN_img.exists()
+    ):
+        print("Missing monitor images")
+        return
+
+    fig = plt.figure(figsize=(15,5))
+
+    ax1 = fig.add_subplot(131)
+    ax2 = fig.add_subplot(132)
+    ax3 = fig.add_subplot(133)
+
+    ax1.imshow(Image.open(input_img))
+    ax1.set_title("(a) Input Image")
+
+    ax2.imshow(Image.open(round1_img))
+    ax2.set_title(f"(b) Activation Map Round {first_round}")
+
+    ax3.imshow(Image.open(roundN_img))
+    ax3.set_title(f"(c) Activation Map Round {last_round}")
+
+    for ax in [ax1, ax2, ax3]:
+        ax.axis("off")
+
+    plt.tight_layout()
+
+    save_path = monitor_dir / f"{client_id}_attention_progress.png"
+
+    plt.savefig(
+        save_path,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+    print(f"Saved -> {save_path}")

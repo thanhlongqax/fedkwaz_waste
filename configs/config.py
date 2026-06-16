@@ -11,7 +11,7 @@ import os
 # ─── Dataset Registry ───────────────────────────────────────────────────────
 
 DATASET_REGISTRY = {
-    "zerowaste": {
+    "zerowaste-f-final": {
         "name": "ZeroWaste-f",
         "url": "https://zenodo.org/record/6412647",
         "num_classes": 4,
@@ -21,7 +21,7 @@ DATASET_REGISTRY = {
         "annotation_format": "COCO",
         "description": "Conveyor belt waste detection - CVPR 2022",
     },
-    "spectralwaste": {
+    "spectralwaste-segmentation": {
         "name": "SpectralWaste",
         "url": "https://zenodo.org/records/10880544",
         "num_classes": 6,
@@ -31,7 +31,7 @@ DATASET_REGISTRY = {
         "annotation_format": "COCO",
         "description": "RGB + Hyperspectral industrial sorting - IROS 2024",
     },
-    "taco": {
+    "taco-dataset": {
         "name": "TACO",
         "url": "http://tacodataset.org",
         "num_classes": 60,
@@ -41,7 +41,7 @@ DATASET_REGISTRY = {
         "annotation_format": "COCO",
         "description": "Crowdsourced multi-camera waste dataset",
     },
-    "mjuwaste": {
+    "mju-waste": {
         "name": "MJU-Waste",
         "url": "https://github.com/realwecan/mju-waste",
         "num_classes": 1,
