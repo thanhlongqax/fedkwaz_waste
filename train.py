@@ -152,8 +152,8 @@ def build_clients(
             batch_size=fl_cfg.local_batch_size,
             shuffle=True,
             num_workers=4,
-            pin_memory=True,
-            persistent_workers=True, # 0 for demo mode compatibility
+            pin_memory=False,
+            persistent_workers=False, # 0 for demo mode compatibility
             collate_fn=collate_fn,
             drop_last=True,
         )
@@ -162,8 +162,8 @@ def build_clients(
             batch_size=fl_cfg.local_batch_size,
             shuffle=False,
             num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
+            pin_memory=False,
+            persistent_workers=False,
             collate_fn=collate_fn,
         )
 
@@ -244,8 +244,8 @@ def train(args):
         batch_size=fl_cfg.local_batch_size,
         shuffle=True,
         num_workers=4,
-        pin_memory=True,
-        persistent_workers=True,
+        pin_memory=False,
+        persistent_workers=False,
         collate_fn=simple_collate,
     )
 
@@ -276,7 +276,7 @@ def train(args):
             clients=clients,
             use_kwaz_aggregation=True,
         )
-
+        torch.cuda.empty_cache()
         # Print summary
         print_round_summary(round_summary)
 

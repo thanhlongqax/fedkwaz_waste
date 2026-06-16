@@ -20,8 +20,32 @@
     │RGB 4K   │    │RGB+HSI  │    │Variable │    │RGBD     │
     └─────────┘    └─────────┘    └─────────┘    └─────────┘
          ↕ KWAZ Exchange (compressed, no raw data shared)
-```
 
+┌─────────────────────────────────────────────────────────────┐
+│                  FedKWAZ MLOps Hub                          │
+│                                                             │
+│  Proxy Model (ResNet18)                                     │
+│  Prototype Aggregation Engine                              │
+│  Prototype Bank                                             │
+│  Monitoring & Visualization                                 │
+│  Checkpoint / Model Registry                                │
+└──────────┬──────────────┬──────────────┬────────────────────┘
+           │              │              │
+           │ Global Prototype Broadcast
+           │
+    ┌──────▼──┐    ┌──────▼──┐    ┌──────▼──┐    ┌──────▼──┐
+    │Client 0 │    │Client 1 │    │Client 2 │    │Client 3 │
+    │ZeroWaste│    │Spectral │    │  TACO   │    │MJUWaste │
+    │ResNet50 │    │EffNetB3 │    │YOLONano │    │MobileV3 │
+    │RGB      │    │RGB+HSI  │    │RGB      │    │RGBD     │
+    └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘
+         │              │              │              │
+         └──────────────┼──────────────┼──────────────┘
+                        │
+          Feature Prototypes + Class Centers
+                        │
+                 (No Raw Data Shared)
+```
 ## 📦 Cấu trúc Project
 
 ```
