@@ -56,7 +56,7 @@ class FedKWAZServer:
         output_dir: str = "./outputs",
     ):
         self.proxy_model = proxy_model.to(device)
-        self.global_model = global_model.to(device)
+        # self.global_model = global_model.to(device)
         self.proxy_loader = proxy_loader
         self.cfg = cfg
         self.device = device
@@ -114,59 +114,59 @@ class FedKWAZServer:
 
     # ── Model Aggregation ─────────────────────────────────────────────────────
 
-    def fedavg_aggregate(
-        self,
-        client_updates: List[Tuple[Dict, Dict]],  # [(state_dict, stats), ...]
-    ) -> Dict:
-        """
-        FedAvg aggregation với sample-count weighting
-        """
-        if not client_updates:
-            return self.global_model.state_dict()
+    # def fedavg_aggregate(
+    #     self,
+    #     client_updates: List[Tuple[Dict, Dict]],  # [(state_dict, stats), ...]
+    # ) -> Dict:
+    #     """
+    #     FedAvg aggregation với sample-count weighting
+    #     """
+    #     if not client_updates:
+    #         return self.global_model.state_dict()
 
-        total_samples = sum(stats["num_samples"] for _, stats in client_updates)
-        weights = [stats["num_samples"] / total_samples for _, stats in client_updates]
+    #     total_samples = sum(stats["num_samples"] for _, stats in client_updates)
+    #     weights = [stats["num_samples"] / total_samples for _, stats in client_updates]
 
-        # Initialize với zeros
-        aggregated = {}
-        ref_state = client_updates[0][0]
+    #     # Initialize với zeros
+    #     aggregated = {}
+    #     ref_state = client_updates[0][0]
 
-        for key in ref_state.keys():
-            if ref_state[key].dtype in [torch.float32, torch.float16, torch.float64]:
-                aggregated[key] = torch.zeros_like(ref_state[key])
-                for (state_dict, _), w in zip(client_updates, weights):
-                    if key in state_dict:
-                        # Handle potential shape mismatch (model heterogeneity)
-                        if state_dict[key].shape == aggregated[key].shape:
-                            aggregated[key] += w * state_dict[key].float()
-            else:
-                aggregated[key] = ref_state[key]
+    #     for key in ref_state.keys():
+    #         if ref_state[key].dtype in [torch.float32, torch.float16, torch.float64]:
+    #             aggregated[key] = torch.zeros_like(ref_state[key])
+    #             for (state_dict, _), w in zip(client_updates, weights):
+    #                 if key in state_dict:
+    #                     # Handle potential shape mismatch (model heterogeneity)
+    #                     if state_dict[key].shape == aggregated[key].shape:
+    #                         aggregated[key] += w * state_dict[key].float()
+    #         else:
+    #             aggregated[key] = ref_state[key]
 
-        return aggregated
-    # def aggregate_prototypes(self, client_updates):
+    #     return aggregated
+    # # def aggregate_prototypes(self, client_updates):
 
-    #     all_proto = []
-    #     weights = []
+    # #     all_proto = []
+    # #     weights = []
 
-    #     for packet, stats in client_updates:
+    # #     for packet, stats in client_updates:
 
-    #         all_proto.append(
-    #             packet["feature_prototypes"].to(self.device)
-    #         )
+    # #         all_proto.append(
+    # #             packet["feature_prototypes"].to(self.device)
+    # #         )
 
-    #         weights.append(
-    #             packet["num_samples"]
-    #         )
+    # #         weights.append(
+    # #             packet["num_samples"]
+    # #         )
 
-    #     weights = np.array(weights)
-    #     weights = weights / weights.sum()
+    # #     weights = np.array(weights)
+    # #     weights = weights / weights.sum()
 
-    #     global_proto = torch.zeros_like(all_proto[0])
+    # #     global_proto = torch.zeros_like(all_proto[0])
 
-    #     for w, p in zip(weights, all_proto):
-    #         global_proto += float(w) * p
+    # #     for w, p in zip(weights, all_proto):
+    # #         global_proto += float(w) * p
 
-    #     return global_proto
+    # #     return global_proto
     def aggregate_prototypes(self, client_updates):
         """
         Aggregate prototype vectors từ các client.
@@ -338,26 +338,26 @@ class FedKWAZServer:
     #     )
     #     return aggregated
 
-    def broadcast_global_model(self, client_model: nn.Module) -> nn.Module:
-        """
-        Broadcast global knowledge sang client model
-        Xử lý heterogeneous architectures bằng cách chỉ copy các layers có shape matching
-        """
-        global_state = self.global_model.state_dict()
-        client_state = client_model.state_dict()
+    # def broadcast_global_model(self, client_model: nn.Module) -> nn.Module:
+    #     """
+    #     Broadcast global knowledge sang client model
+    #     Xử lý heterogeneous architectures bằng cách chỉ copy các layers có shape matching
+    #     """
+    #     global_state = self.global_model.state_dict()
+    #     client_state = client_model.state_dict()
 
-        updated_state = copy.deepcopy(client_state)
-        copied_count = 0
+    #     updated_state = copy.deepcopy(client_state)
+    #     copied_count = 0
 
-        for key in client_state.keys():
-            # Tìm matching key trong global model (có thể khác tên)
-            if key in global_state and global_state[key].shape == client_state[key].shape:
-                updated_state[key] = global_state[key]
-                copied_count += 1
+    #     for key in client_state.keys():
+    #         # Tìm matching key trong global model (có thể khác tên)
+    #         if key in global_state and global_state[key].shape == client_state[key].shape:
+    #             updated_state[key] = global_state[key]
+    #             copied_count += 1
 
-        logger.debug(f"Broadcast: {copied_count}/{len(client_state)} layers synced")
-        client_model.load_state_dict(updated_state, strict=False)
-        return client_model
+    #     logger.debug(f"Broadcast: {copied_count}/{len(client_state)} layers synced")
+    #     client_model.load_state_dict(updated_state, strict=False)
+    #     return client_model
 
     # ── Main FL Round ─────────────────────────────────────────────────────────
 

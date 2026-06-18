@@ -486,8 +486,8 @@ class FedKWAZLoss(nn.Module):
         KWAZ-guided refinement: Tập trung distillation vào vùng weak
         Sample với KWAZ score cao sẽ nhận loss weight lớn hơn
         """
-        private_logits = private_output["logits"]
-        proxy_logits = proxy_output["logits"]
+        # private_logits = private_output["logits"]
+        # proxy_logits = proxy_output["logits"]
         min_classes = min(private_logits.size(-1), proxy_logits.size(-1))
 
         kl_per_sample = F.kl_div(
@@ -524,21 +524,30 @@ class FedKWAZLoss(nn.Module):
         kdp_result: Dict,
     ) -> Dict[str, torch.Tensor]:
         """Tính tổng hợp tất cả losses"""
+        # print(
+        #     "PRIVATE LOGITS:",
+        #     private_output["logits"].shape
+        # )
+
+        # print(
+        #     "PROXY LOGITS:",
+        #     proxy_output["logits"].shape
+        # )
         # 1. Task loss
         if self.use_focal:
             task_loss = self.focal_loss(private_output["logits"], targets)
         else:
             task_loss = F.cross_entropy(private_output["logits"], targets)
 
-        # 2. Global alignment (Stage 1)
+        # 2. Global alignment (Stage 1) Feature Alignment
         repr_loss = self.representation_alignment_loss(
             private_output["global_feat"], proxy_output["global_feat"]
         )
-        global_kd_loss = self.kd_loss(private_output["logits"], proxy_output["logits"])
+        # global_kd_loss = self.kd_loss(private_output["logits"], proxy_output["logits"])
 
         # 3. KWAZ-guided refinement (Stage 2)
-        kwaz_score = kwaz_result.get("kwaz_score", torch.zeros(targets.size(0), device=targets.device))
-        kwaz_loss = self.kwaz_guided_loss(private_output, proxy_output, kwaz_score)
+        # kwaz_score = kwaz_result.get("kwaz_score", torch.zeros(targets.size(0), device=targets.device))
+        # kwaz_loss = self.kwaz_guided_loss(private_output, proxy_output, kwaz_score)
 
         # 4. KDP loss
         kdp_loss = kdp_result.get("kdp_loss", torch.tensor(0.0, device=targets.device))
@@ -549,19 +558,40 @@ class FedKWAZLoss(nn.Module):
             camera_loss = kwaz_result["camera_score"].mean() * 0.1
 
         # Total loss
+        # total_loss = (
+        #     task_loss
+        #     + self.alpha * (repr_loss + global_kd_loss)
+        #     + self.beta * (kwaz_loss + kdp_loss)
+        #     + 0.1 * camera_loss
+        # )
         total_loss = (
             task_loss
-            + self.alpha * (repr_loss + global_kd_loss)
-            + self.beta * (kwaz_loss + kdp_loss)
-            + 0.1 * camera_loss
+            + self.alpha * repr_loss
+            + self.beta * kdp_loss
         )
-
+        # print(
+        #     f"TASK={task_loss.item():.4f} | "
+        #     f"REPR={repr_loss.item():.4f} | "
+        #     f"KD={global_kd_loss.item():.4f} | "
+        #     f"KWAZ={kwaz_loss.item():.4f} | "
+        #     f"KDP={kdp_loss.item():.4f} | "
+        #     f"TOTAL={total_loss.item():.4f}"
+        # )
         return {
             "total": total_loss,
             "task": task_loss.detach(),
             "repr": repr_loss.detach(),
-            "global_kd": global_kd_loss.detach(),
-            "kwaz": kwaz_loss.detach(),
+            # "global_kd": global_kd_loss.detach(),
+            # "kwaz": kwaz_loss.detach(),
             "kdp": kdp_loss.detach(),
             "camera": camera_loss.detach(),
+                "global_kd": torch.tensor(
+                0.0,
+                device=targets.device
+            ),
+
+            "kwaz": torch.tensor(
+                0.0,
+                device=targets.device
+            ),
         }

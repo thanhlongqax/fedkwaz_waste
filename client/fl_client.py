@@ -404,13 +404,6 @@ class FedKWAZClient:
                 # giữa các dataset khác nhau.
                 if self.global_prototype is not None:
 
-                    # proto_loss = nn.functional.mse_loss(
-                    #     private_out["global_feat"],
-                    #     self.global_prototype.unsqueeze(0).expand(
-                    #         private_out["global_feat"].shape[0],
-                    #         -1
-                    #     )
-                    # )
                     global_proto = (
                         self.global_prototype
                         .detach()
@@ -426,7 +419,7 @@ class FedKWAZClient:
                         global_proto
                     )
 
-                    losses["total"] += 0.1 * proto_loss
+                    losses["total"] += 0.01 * proto_loss
                 # ── Backward ──────────────────────────────────────
                 optimizer.zero_grad()
                 losses["total"].backward()

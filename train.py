@@ -86,8 +86,8 @@ def build_clients(
     for client_id, dataset_name in CLIENT_DATASET_MAP.items():
         
         # Chỉ chạy client_3 để debug TACO
-        # if client_id != "client_3":
-        #     continue
+        if client_id != "client_2":
+            continue
         model_name = CLIENT_MODEL_MAP[client_id]
         num_classes = dataset_num_classes.get(dataset_name, 4)
 
@@ -215,10 +215,10 @@ def train(args):
 
     # ── Build Server ─────────────────────────────────────────────────────────
     # Proxy model: ResNet18 trên server
-    proxy_model = ProxyModel(num_classes=10, feature_dim=fl_cfg.feature_dim)
+    proxy_model = ProxyModel(num_classes=28, feature_dim=fl_cfg.feature_dim)
 
     # Global model: cùng kiến trúc với client_0 (ResNet50) làm reference
-    global_model = build_client_model("resnet50", num_classes=4, feature_dim=fl_cfg.feature_dim)
+    global_model = build_client_model("resnet50", num_classes=28, feature_dim=fl_cfg.feature_dim)
 
     # Proxy loader (dùng dataset của client_0 làm proxy)
     proxy_ds = build_demo_dataset("zerowaste-f-final", num_samples=100) if demo_mode else \
@@ -279,10 +279,16 @@ def train(args):
         torch.cuda.empty_cache()
         # Print summary
         print_round_summary(round_summary)
-
+        # ── accuracy từ server (nếu có)
+        acc = round_summary.get("accuracy", None)
+        # ── BEST MODEL SAVE (QUAN TRỌNG NHẤT)
+        if acc is not None and acc > best_acc:
+            best_acc = acc
+            server.save_checkpoint("best_model.pt")
+            logger.info(f"🔥 New best model: {best_acc:.4f}")
         # Save periodically
-        if (round_num + 1) % 10 == 0:
-            server.save_checkpoint(f"checkpoint_round_{round_num+1}.pt")
+        # if (round_num + 1) % 10 == 0:
+        #     server.save_checkpoint(f"checkpoint_round_{round_num+1}.pt")
 
     # Final save
     server.save_checkpoint("final_model.pt")
