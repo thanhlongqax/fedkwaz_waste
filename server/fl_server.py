@@ -368,11 +368,13 @@ class FedKWAZServer:
     ) -> Dict:
         """
         Thực hiện một FL round hoàn chỉnh:
-        1. Train proxy model
-        2. Distribute proxy to clients
-        3. Clients perform local training
-        4. Aggregate updates
-        5. Evaluate
+        1. Train Proxy Model
+        2. Broadcast Proxy Knowledge
+        3. Local Client Training
+        4. Collect Knowledge Packets
+        5. Prototype Aggregation
+        6. Broadcast Global Prototype
+        7. Evaluation
         """
         self.current_round += 1
         round_start = time.time()
@@ -490,14 +492,6 @@ class FedKWAZServer:
         torch.save(checkpoint, path)
         logger.info(f"💾 Checkpoint saved: {path}")
 
-    # def load_checkpoint(self, path: str):
-    #     checkpoint = torch.load(path, map_location=self.device)
-    #     self.current_round = checkpoint["round"]
-    #     self.global_model.load_state_dict(checkpoint["global_model_state"], strict=False)
-    #     self.proxy_model.load_state_dict(checkpoint["proxy_model_state"], strict=False)
-    #     self.best_global_acc = checkpoint["best_acc"]
-    #     self.history = checkpoint.get("history", [])
-    #     logger.info(f"📂 Checkpoint loaded from round {self.current_round}")
     def load_checkpoint(self, path: str):
 
         checkpoint = torch.load(

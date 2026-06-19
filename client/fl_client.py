@@ -23,41 +23,56 @@ from fedkwaz.kwaz_core import (
     KWAZDetector, HierarchicalAdaptivePatchMixing,
     KnowledgeDiscrepancyPerceptron, FedKWAZLoss
 )
-
+from collections import Counter
 logger = logging.getLogger(__name__)
 
 
 # ─── Camera Metadata Registry ─────────────────────────────────────────────────
 
 CAMERA_META_REGISTRY = {
-    "zerowaste": {
+    "zerowaste-f-final": {
         "modality_id": 0,           # RGB
         "resolution_ratio": 1.78,   # 1920x1080 vs 1080p baseline
         "noise_level": 0.05,        # Industrial grade - low noise
         "spectral_id": 0,           # Visible spectrum
         "camera_name": "Teledyne Dalsa Genie Nano",
     },
-    "spectralwaste": {
+    "spectralwaste-segmentation": {
         "modality_id": 2,           # RGB + HSI
         "resolution_ratio": 0.95,   # ~1024px
         "noise_level": 0.08,        # Line-scan camera noise
         "spectral_id": 2,           # SWIR (900-1700nm)
         "camera_name": "Specim FX17 + Teledyne DALSA Linea",
     },
-    "taco": {
-        "modality_id": 0,           # RGB
-        "resolution_ratio": 0.6,    # Mobile camera variable
-        "noise_level": 0.20,        # Mobile camera higher noise
-        "spectral_id": 0,           # Visible
-        "camera_name": "Various (crowdsourced mobile)",
+    # "taco": {
+    #     "modality_id": 0,           # RGB
+    #     "resolution_ratio": 0.6,    # Mobile camera variable
+    #     "noise_level": 0.20,        # Mobile camera higher noise
+    #     "spectral_id": 0,           # Visible
+    #     "camera_name": "Various (crowdsourced mobile)",
+    # },
+    # "mjuwaste": {
+    #     "modality_id": 1,           # RGBD
+    #     "resolution_ratio": 0.44,   # 640x480
+    #     "noise_level": 0.12,        # Kinect structured light noise
+    #     "spectral_id": 0,           # Visible + IR depth
+    #     "camera_name": "Microsoft Kinect v1",
+    # },
+    "garbage-classification": {
+        "modality_id": 0,
+        "resolution_ratio": 0.60,
+        "noise_level": 0.15,
+        "spectral_id": 0,
+        "camera_name": "Consumer RGB Camera",
     },
-    "mjuwaste": {
-        "modality_id": 1,           # RGBD
-        "resolution_ratio": 0.44,   # 640x480
-        "noise_level": 0.12,        # Kinect structured light noise
-        "spectral_id": 0,           # Visible + IR depth
-        "camera_name": "Microsoft Kinect v1",
-    },
+
+    "recyclable-household-waste": {
+        "modality_id": 0,
+        "resolution_ratio": 0.85,
+        "noise_level": 0.12,
+        "spectral_id": 0,
+        "camera_name": "Mixed RealWorld RGB",
+    },    
 }
 
 
@@ -168,18 +183,39 @@ class FedKWAZClient:
             return
 
         self.global_prototype = prototype.to(self.device)
-    def _get_pseudo_targets(self, batch: Dict) -> torch.Tensor:
-        """Tạo pseudo labels từ batch (sử dụng object count hoặc dominant class)"""
+    # def _get_pseudo_targets(self, batch: Dict) -> torch.Tensor:
+    #     """Tạo pseudo labels từ batch (sử dụng object count hoặc dominant class)"""
+    #     labels_list = batch["labels"]
+    #     pseudo = []
+    #     for labels in labels_list:
+    #         if len(labels) > 0:
+    #             # Lấy class xuất hiện nhiều nhất
+    #             mode = torch.mode(labels).values.item() if len(labels) > 0 else 0
+    #             pseudo.append(int(mode))
+    #         else:
+    #             pseudo.append(0)  # background
+    #     return torch.tensor(pseudo, dtype=torch.long, device=self.device)
+    def _get_pseudo_targets(self, batch):
+
+        if isinstance(batch["labels"], torch.Tensor):
+            return batch["labels"].to(self.device)
+
         labels_list = batch["labels"]
+
         pseudo = []
+
         for labels in labels_list:
+
             if len(labels) > 0:
-                # Lấy class xuất hiện nhiều nhất
-                mode = torch.mode(labels).values.item() if len(labels) > 0 else 0
-                pseudo.append(int(mode))
+                pseudo.append(torch.mode(labels).values.item())
             else:
-                pseudo.append(0)  # background
-        return torch.tensor(pseudo, dtype=torch.long, device=self.device)
+                pseudo.append(0)
+
+        return torch.tensor(
+            pseudo,
+            dtype=torch.long,
+            device=self.device
+        )
     @torch.no_grad()
     def extract_feature_prototypes(self):
         """
@@ -205,11 +241,11 @@ class FedKWAZClient:
                     hsi=batch["meta"]["hsi"].to(self.device)
                 )
 
-            elif self.dataset_name == "mju-waste":
-                out = self.model(
-                    images,
-                    depth=batch["meta"]["depth"].to(self.device)
-                )
+            # elif self.dataset_name == "mju-waste":
+            #     out = self.model(
+            #         images,
+            #         depth=batch["meta"]["depth"].to(self.device)
+            #     )
 
             else:
                 out = self.model(images)
@@ -262,11 +298,11 @@ class FedKWAZClient:
                     hsi=batch["meta"]["hsi"].to(self.device)
                 )
 
-            elif self.dataset_name == "mju-waste":
-                out = self.model(
-                    images,
-                    depth=batch["meta"]["depth"].to(self.device)
-                )
+            # elif self.dataset_name == "mju-waste":
+            #     out = self.model(
+            #         images,
+            #         depth=batch["meta"]["depth"].to(self.device)
+            #     )
 
             else:
                 out = self.model(images)
@@ -331,9 +367,9 @@ class FedKWAZClient:
                 if self.dataset_name == "spectralwaste-segmentation" and "hsi" in batch.get("meta", {}):
                     hsi = batch["meta"]["hsi"].to(self.device)
                     private_out = self.model(images, hsi=hsi)
-                elif self.dataset_name == "mju-waste" and "depth" in batch.get("meta", {}):
-                    depth = batch["meta"]["depth"].to(self.device)
-                    private_out = self.model(images, depth=depth)
+                # elif self.dataset_name == "mju-waste" and "depth" in batch.get("meta", {}):
+                #     depth = batch["meta"]["depth"].to(self.device)
+                #     private_out = self.model(images, depth=depth)
                 else:
                     private_out = self.model(images)
 
@@ -547,10 +583,10 @@ class FedKWAZClient:
             images = batch["images"].to(self.device)
             targets = self._get_pseudo_targets(batch)
 
-            if self.dataset_name == "spectralwaste" and "hsi" in batch.get("meta", {}):
+            if self.dataset_name == "spectralwaste-segmentation" and "hsi" in batch.get("meta", {}):
                 out = self.model(images, hsi=batch["meta"]["hsi"].to(self.device))
-            elif self.dataset_name == "mjuwaste" and "depth" in batch.get("meta", {}):
-                out = self.model(images, depth=batch["meta"]["depth"].to(self.device))
+            # elif self.dataset_name == "mjuwaste" and "depth" in batch.get("meta", {}):
+            #     out = self.model(images, depth=batch["meta"]["depth"].to(self.device))
             else:
                 out = self.model(images)
 
@@ -559,7 +595,29 @@ class FedKWAZClient:
             total_samples += targets.size(0)
             all_preds.extend(preds.cpu().numpy())
             all_targets.extend(targets.cpu().numpy())
+            
+        target_counter = Counter(all_targets)
 
+        logger.info(
+            f"Target Distribution: {target_counter.most_common(10)}"
+        )
+        pred_counter = Counter(all_preds)
+        top5 = pred_counter.most_common(10)
+
+        logger.info(
+            f"[{self.client_id}] Prediction Distribution: "
+            f"{dict(pred_counter)}"
+        )
+        logger.info(
+            f"[{self.client_id}] Top Predictions: {top5}"
+        )
+        logger.info(
+            f"Unique Targets: {sorted(set(all_targets))}"
+        )
+
+        logger.info(
+            f"Unique Preds: {sorted(set(all_preds))}"
+        )
         accuracy = total_correct / max(total_samples, 1)
 
         return {
@@ -594,9 +652,9 @@ class FedKWAZClient:
             hsi = self.monitor_image["hsi"].unsqueeze(0).to(self.device)
             out = self.model(image, hsi=hsi)
 
-        elif self.dataset_name == "mju-waste":
-            depth = self.monitor_image["depth"].unsqueeze(0).to(self.device)
-            out = self.model(image, depth=depth)
+        # elif self.dataset_name == "mju-waste":
+        #     depth = self.monitor_image["depth"].unsqueeze(0).to(self.device)
+        #     out = self.model(image, depth=depth)
 
         else:
             out = self.model(image)

@@ -85,8 +85,8 @@ def build_clients(
 
     for client_id, dataset_name in CLIENT_DATASET_MAP.items():
         
-        # Chỉ chạy client_3 để debug TACO
-        if client_id != "client_2":
+        # Chỉ chạy client_0 và client_1 để debug TACO
+        if client_id != "client_1" and client_id != "client_0" :
             continue
         model_name = CLIENT_MODEL_MAP[client_id]
         num_classes = dataset_num_classes.get(dataset_name, 4)

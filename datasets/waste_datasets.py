@@ -356,144 +356,91 @@ class SpectralWasteDataset(WasteBaseDataset):
             "hardware": "NVIDIA RTX 3060 (Workstation)",
         }
 
-
-# ─── TACO Dataset ─────────────────────────────────────────────────────────────
-
-class TACODataset(WasteBaseDataset):
+# ─── RecyclableHouseholdDataset Dataset ───────────────────────────────────────────────────────
+class RecyclableHouseholdDataset(WasteBaseDataset):
     """
-    TACO Dataset - crowdsourced từ nhiều loại camera
+    RecyclableHouseholdDataset - crowdsourced từ nhiều loại camera
     Classes: 60 loại rác (subset: 28 supercategories)
     Download: http://tacodataset.org / https://github.com/pedropro/TACO
+    
     """
-
-    CAMERA_TYPE = "crowdsourced_mobile_varied"
-    # SUPERCATEGORY_FILTER = [
-    #     "Plastic bag & wrapper", "Bottle", "Can", "Cup", "Carton",
-    #     "Paper", "Cigarette", "Glass bottle", "Metal bottle cap", "Other plastic"
-    # ]
-
+    """
+    Cấu trúc của RecyclableHouseholdDataset
+    recyclable-household/
+    └── images/
+        ├── Plastic water bottles/
+        │   ├── default/
+        │   └── real_world/
+        ├── Plastic soda bottles/
+        ├── Cardboard boxes/
+        ├── Newspaper/
+        └── ...
+        
+    """
+    CAMERA_TYPE = "consumer_rgb_mixed"
     def __init__(
         self,
         root: str,
         split: str = "train",
         img_size: int = 640,
-        use_supercategories: bool = True,  # Gom nhóm 60→28 class
         **kwargs
     ):
-        self.use_supercategories = use_supercategories
         super().__init__(root, split, img_size, **kwargs)
-    def _load_data(self):
-        ann_file = self.root / "data" / "annotations.json"
-        img_dir = self.root / "data"
-
-        with open(ann_file) as f:
-            coco_data = json.load(f)
-
-        images = coco_data["images"]
-        annotations = coco_data["annotations"]
-        categories = coco_data["categories"]
         
-        # SUPER CATEGORY MAPPING (28 classes)
-        # =========================
-        cat_id_to_super = {
-            c["id"]: c["supercategory"].strip().lower()
-            for c in coco_data["categories"]
+    def _load_data(self):
+
+        images_root = self.root / "images"
+
+        if not images_root.exists():
+            raise FileNotFoundError(
+                f"Dataset not found: {images_root}"
+            )
+
+        class_dirs = sorted(
+            [d for d in images_root.iterdir() if d.is_dir()]
+        )
+
+        self.class_names = [d.name for d in class_dirs]
+
+        self.class_to_idx = {
+            cls: idx
+            for idx, cls in enumerate(self.class_names)
         }
-        supers = sorted(set(cat_id_to_super.values()))
-        super_to_idx = {s: i + 1 for i, s in enumerate(supers)}
 
-        self.class_names = ["background"] + supers
-        self._cat_id_to_label = {
-            cid: super_to_idx[cat_id_to_super[cid]]
-            for cid in cat_id_to_super
-        }
+        self.images = []
+        self.annotations = []
 
-        # =========================
-        # IMAGE INDEX (FIX #2)
-        # =========================
-        img_id_to_img = {img["id"]: img for img in images}
-        image_ids = list(img_id_to_img.keys())
-        np.random.shuffle(image_ids)
+        for cls_dir in class_dirs:
 
-        n = len(image_ids)
-        lo, hi = {
-            "train": (0, int(0.7 * n)),
-            "val": (int(0.7 * n), int(0.85 * n)),
-            "test": (int(0.85 * n), n),
-        }.get(self.split, (0, n))
+            class_name = cls_dir.name
+            label = self.class_to_idx[class_name]
 
-        selected_ids = image_ids[lo:hi]
+            for subset in ["default", "real_world"]:
 
-        # =========================
-        # GROUP ANNOTATIONS
-        # =========================
-        img_id_to_anns = {}
-        for ann in annotations:
-            img_id_to_anns.setdefault(ann["image_id"], []).append(ann)
+                subset_dir = cls_dir / subset
 
-        # =========================
-        # BUILD DATASET (FIX #3)
-        # =========================
-        for img_id in selected_ids:
-            img_info = img_id_to_img[img_id]
-            anns = img_id_to_anns.get(img_id, [])
-
-            img_path = img_dir / img_info["file_name"]
-            if not img_path.exists():
-                img_path = self.root / img_info["file_name"]
-
-            if not img_path.exists():
-                continue
-
-            boxes = []
-            labels = []
-
-            for a in anns:
-                cid = a["category_id"]
-                if cid not in self._cat_id_to_label:
+                if not subset_dir.exists():
                     continue
 
-                boxes.append(a["bbox"])
-                labels.append(self._cat_id_to_label[cid])
+                for ext in ["*.png", "*.jpg", "*.jpeg"]:
 
-            # IMPORTANT FIX
-            if len(boxes) == 0:
-                continue
+                    for img_path in subset_dir.glob(ext):
 
-            self.images.append(img_path)
-            self.annotations.append({
-                "boxes": boxes,
-                "labels": labels,
-            })
-            # =========================
-            # DEBUG LABEL DISTRIBUTION
-            # =========================
-            from collections import Counter
+                        self.images.append(img_path)
 
-            all_labels = []
+                        self.annotations.append({
+                            "label": label
+                        })
 
-            for ann in self.annotations:
-                all_labels.extend(ann["labels"])
+        print(
+            f"Loaded {len(self.images)} samples "
+            f"from {len(self.class_names)} classes"
+        )
+    def __getitem__(self, idx):
 
-            # print("\n🔥 LABEL DISTRIBUTION")
-            # print(Counter(all_labels))
-
-            # print("🔥 NUM IMAGES:", len(self.images))
-            # print("🔥 NUM LABELS:", len(all_labels))
-            # print("🔥 UNIQUE LABELS:", sorted(set(all_labels)))
-    def __getitem__(self, idx: int) -> Dict:
         img_path = self.images[idx]
-        ann = self.annotations[idx]
 
         image = Image.open(img_path).convert("RGB")
-        w_orig, h_orig = image.size
-        image = image.resize((self.img_size, self.img_size))
-
-        scale_x, scale_y = self.img_size / w_orig, self.img_size / h_orig
-        boxes = []
-        for box in ann["boxes"]:
-            x, y, bw, bh = box
-            boxes.append([x * scale_x, y * scale_y, (x + bw) * scale_x, (y + bh) * scale_y])
 
         if self.transform:
             image_tensor = self.transform(image)
@@ -502,262 +449,591 @@ class TACODataset(WasteBaseDataset):
 
         return {
             "image": image_tensor,
-            "boxes": torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4)),
-            "labels": torch.tensor(ann["labels"], dtype=torch.long),
+            "label": torch.tensor(
+                self.annotations[idx]["label"],
+                dtype=torch.long
+            ),
             "image_path": str(img_path),
-            "dataset": "taco",
+            "dataset": "recyclable-household",
             "camera_type": self.CAMERA_TYPE,
         }
+    def get_client_info(self):
 
-    def get_client_info(self) -> Dict:
         return {
-            "dataset_name": "TACO",
+            "dataset_name": "RecyclableHousehold",
             "camera_type": self.CAMERA_TYPE,
-            "num_classes": len(self.class_names) - 1,
+            "num_classes": len(self.class_names),
             "num_samples": len(self),
-            "modality": "RGB (variable)",
-            "resolution": "Variable (crowdsourced)",
-            "hardware": "NVIDIA Jetson Orin (Edge)",
+            "modality": "RGB",
+            "hardware": "Mobile Edge Device",
         }
 
+# # ────────────────────────────────────────────────────────────────
 
-# ─── MJU-Waste Dataset ────────────────────────────────────────────────────────
-class MJUWasteDataset(WasteBaseDataset):
+# # ─── GarbageClassification Dataset ─────────────────────────────────────────────────────────────
+
+class GarbageClassificationDataset(WasteBaseDataset):
     """
-    MJU-Waste Dataset
+    Garbage Classification Dataset
 
-    Structure:
-    mju-waste/
-    ├── DepthImages/
-    ├── ImageSets/
-    │   └── Segmentation/
-    │       ├── train.txt
-    │       ├── val.txt
-    │       ├── test.txt
-    ├── JPEGImages/
-    ├── SegmentationClass/
+    Classes:
+    cardboard
+    glass
+    metal
+    paper
+    plastic
+    trash
     """
 
-    CLASS_NAMES = ["background", "waste"]
-    CAMERA_TYPE = "rgbd_kinect"
+    CLASS_NAMES = [
+        "cardboard",
+        "glass",
+        "metal",
+        "paper",
+        "plastic",
+        "trash"
+    ]
+
+    CAMERA_TYPE = "consumer_rgb"
 
     def __init__(
         self,
         root: str,
         split: str = "train",
         img_size: int = 640,
-        use_depth: bool = True,
+        train_ratio: float = 0.7,
+        val_ratio: float = 0.15,
         **kwargs
     ):
-        self.use_depth = use_depth
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
+
         self.class_names = self.CLASS_NAMES
 
         super().__init__(
-            root=root,
-            split=split,
-            img_size=img_size,
+            root,
+            split,
+            img_size,
             **kwargs
         )
 
     def _load_data(self):
 
-        split_file = (
-            self.root
-            / "ImageSets"
-            / "Segmentation"
-            / f"{self.split}.txt"
-        )
+        self.images = []
+        self.annotations = []
 
-        if not split_file.exists():
-            raise FileNotFoundError(
-                f"Không tìm thấy split file: {split_file}"
-            )
+        class_to_idx = {
+            cls: idx
+            for idx, cls in enumerate(self.CLASS_NAMES)
+        }
 
-        img_dir = self.root / "JPEGImages"
-        depth_dir = self.root / "DepthImages"
-        mask_dir = self.root / "SegmentationClass"
+        all_samples = []
 
-        with open(split_file, "r") as f:
-            image_ids = [
-                line.strip()
-                for line in f.readlines()
-                if line.strip()
-            ]
+        for cls in self.CLASS_NAMES:
 
-        for image_id in image_ids:
+            cls_dir = self.root / cls
 
-            img_path = img_dir / f"{image_id}.jpg"
-
-            if not img_path.exists():
-                img_path = img_dir / f"{image_id}.png"
-
-            if not img_path.exists():
+            if not cls_dir.exists():
                 continue
 
-            depth_path = depth_dir / f"{image_id}.png"
-            mask_path = mask_dir / f"{image_id}.png"
+            for ext in ["*.jpg", "*.jpeg", "*.png"]:
+
+                for img_path in cls_dir.glob(ext):
+
+                    all_samples.append(
+                        (img_path, class_to_idx[cls])
+                    )
+
+        np.random.seed(42)
+        np.random.shuffle(all_samples)
+
+        n = len(all_samples)
+
+        train_end = int(n * self.train_ratio)
+        val_end = int(
+            n * (self.train_ratio + self.val_ratio)
+        )
+
+        if self.split == "train":
+            samples = all_samples[:train_end]
+
+        elif self.split == "val":
+            samples = all_samples[
+                train_end:val_end
+            ]
+
+        else:
+            samples = all_samples[val_end:]
+
+        for img_path, label in samples:
 
             self.images.append(img_path)
 
             self.annotations.append({
-                "depth_path": (
-                    str(depth_path)
-                    if depth_path.exists()
-                    else None
-                ),
-                "mask_path": (
-                    str(mask_path)
-                    if mask_path.exists()
-                    else None
-                )
+                "label": label
             })
 
-    def _load_depth(
-        self,
-        depth_path: Optional[str]
-    ) -> Optional[torch.Tensor]:
+        print(
+            f"Loaded {len(self.images)} "
+            f"{self.split} samples"
+        )
 
-        if depth_path is None:
-            return None
-
-        if not Path(depth_path).exists():
-            return None
-
-        try:
-            depth = Image.open(depth_path)
-
-            depth = depth.resize(
-                (self.img_size, self.img_size),
-                Image.NEAREST
-            )
-
-            depth_arr = np.array(
-                depth,
-                dtype=np.float32
-            )
-
-            depth_arr = (
-                depth_arr - depth_arr.min()
-            ) / (
-                depth_arr.max()
-                - depth_arr.min()
-                + 1e-8
-            )
-
-            return torch.from_numpy(
-                depth_arr
-            ).unsqueeze(0)
-
-        except Exception:
-            return None
-
-    def _load_mask(
-        self,
-        mask_path: Optional[str]
-    ) -> Optional[torch.Tensor]:
-
-        if mask_path is None:
-            return None
-
-        if not Path(mask_path).exists():
-            return None
-
-        try:
-            mask = Image.open(mask_path)
-
-            mask = mask.resize(
-                (self.img_size, self.img_size),
-                Image.NEAREST
-            )
-
-            mask = np.array(mask)
-
-            mask = (mask > 0).astype(np.uint8)
-
-            return torch.from_numpy(mask).long()
-
-        except Exception:
-            return None
-
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx):
 
         img_path = self.images[idx]
-        ann = self.annotations[idx]
 
         image = Image.open(img_path).convert("RGB")
-
-        image = image.resize(
-            (self.img_size, self.img_size)
-        )
 
         if self.transform:
             image_tensor = self.transform(image)
         else:
             image_tensor = self._default_transforms()(image)
 
-        # Depth
-        depth_tensor = None
-
-        if self.use_depth:
-            depth_tensor = self._load_depth(
-                ann["depth_path"]
-            )
-
-        if depth_tensor is None:
-            depth_tensor = torch.zeros(
-                1,
-                self.img_size,
-                self.img_size
-            )
-
-        # Segmentation Mask
-        mask_tensor = self._load_mask(
-            ann["mask_path"]
-        )
-
-        if mask_tensor is None:
-            mask_tensor = torch.zeros(
-                self.img_size,
-                self.img_size,
-                dtype=torch.long
-            )
-        # tạo pseudo label từ mask
-        if mask_tensor.sum() > 0:
-            labels = torch.tensor([1], dtype=torch.long)
-        else:
-            labels = torch.tensor([0], dtype=torch.long)
         return {
             "image": image_tensor,
-            "depth": depth_tensor,
-            "mask": mask_tensor,
-            
-            "boxes": torch.zeros((0,4), dtype=torch.float32),
-
-            "labels": torch.tensor([1], dtype=torch.long),
+            "label": torch.tensor(
+                self.annotations[idx]["label"],
+                dtype=torch.long
+            ),
             "image_path": str(img_path),
-            "dataset": "mjuwaste",
+            "dataset": "garbage-classification",
             "camera_type": self.CAMERA_TYPE,
         }
 
     def get_client_info(self):
 
         return {
-            "dataset_name": "MJU-Waste",
+            "dataset_name": "GarbageClassification",
             "camera_type": self.CAMERA_TYPE,
-            "num_classes": 1,
+            "num_classes": len(self.CLASS_NAMES),
             "num_samples": len(self),
-            "modality": "RGBD",
-            "resolution": "640x480",
-            "hardware": "Raspberry Pi 4 (IoT Edge)",
+            "modality": "RGB",
+            "hardware": "Desktop GPU",
         }
+# # ───  ─────────────────────────────────────────────────────────────
+# # ─── TACO Dataset ─────────────────────────────────────────────────────────────
+
+# class TACODataset(WasteBaseDataset):
+#     """
+#     TACO Dataset - crowdsourced từ nhiều loại camera
+#     Classes: 60 loại rác (subset: 28 supercategories)
+#     Download: http://tacodataset.org / https://github.com/pedropro/TACO
+#     """
+
+#     CAMERA_TYPE = "crowdsourced_mobile_varied"
+#     # SUPERCATEGORY_FILTER = [
+#     #     "Plastic bag & wrapper", "Bottle", "Can", "Cup", "Carton",
+#     #     "Paper", "Cigarette", "Glass bottle", "Metal bottle cap", "Other plastic"
+#     # ]
+
+#     def __init__(
+#         self,
+#         root: str,
+#         split: str = "train",
+#         img_size: int = 640,
+#         use_supercategories: bool = True,  # Gom nhóm 60→28 class
+#         **kwargs
+#     ):
+#         self.use_supercategories = use_supercategories
+#         super().__init__(root, split, img_size, **kwargs)
+#     def _load_data(self):
+#         ann_file = self.root / "data" / "annotations.json"
+#         img_dir = self.root / "data"
+
+#         with open(ann_file) as f:
+#             coco_data = json.load(f)
+
+#         images = coco_data["images"]
+#         annotations = coco_data["annotations"]
+#         categories = coco_data["categories"]
+        
+#         # SUPER CATEGORY MAPPING (28 classes)
+#         # =========================
+#         cat_id_to_super = {
+#             c["id"]: c["supercategory"].strip().lower()
+#             for c in coco_data["categories"]
+#         }
+#         supers = sorted(set(cat_id_to_super.values()))
+#         super_to_idx = {s: i + 1 for i, s in enumerate(supers)}
+
+#         self.class_names = ["background"] + supers
+#         self._cat_id_to_label = {
+#             cid: super_to_idx[cat_id_to_super[cid]]
+#             for cid in cat_id_to_super
+#         }
+
+#         # =========================
+#         # IMAGE INDEX (FIX #2)
+#         # =========================
+#         img_id_to_img = {img["id"]: img for img in images}
+#         image_ids = list(img_id_to_img.keys())
+#         np.random.shuffle(image_ids)
+
+#         n = len(image_ids)
+#         lo, hi = {
+#             "train": (0, int(0.7 * n)),
+#             "val": (int(0.7 * n), int(0.85 * n)),
+#             "test": (int(0.85 * n), n),
+#         }.get(self.split, (0, n))
+
+#         selected_ids = image_ids[lo:hi]
+
+#         # =========================
+#         # GROUP ANNOTATIONS
+#         # =========================
+#         img_id_to_anns = {}
+#         for ann in annotations:
+#             img_id_to_anns.setdefault(ann["image_id"], []).append(ann)
+
+#         # =========================
+#         # BUILD DATASET (FIX #3)
+#         # =========================
+#         for img_id in selected_ids:
+#             img_info = img_id_to_img[img_id]
+#             anns = img_id_to_anns.get(img_id, [])
+
+#             img_path = img_dir / img_info["file_name"]
+#             if not img_path.exists():
+#                 img_path = self.root / img_info["file_name"]
+
+#             if not img_path.exists():
+#                 continue
+
+#             boxes = []
+#             labels = []
+
+#             for a in anns:
+#                 cid = a["category_id"]
+#                 if cid not in self._cat_id_to_label:
+#                     continue
+
+#                 boxes.append(a["bbox"])
+#                 labels.append(self._cat_id_to_label[cid])
+
+#             # IMPORTANT FIX
+#             if len(boxes) == 0:
+#                 continue
+
+#             self.images.append(img_path)
+#             self.annotations.append({
+#                 "boxes": boxes,
+#                 "labels": labels,
+#             })
+#             # =========================
+#             # DEBUG LABEL DISTRIBUTION
+#             # =========================
+#             from collections import Counter
+
+#             all_labels = []
+
+#             for ann in self.annotations:
+#                 all_labels.extend(ann["labels"])
+
+#             # print("\n🔥 LABEL DISTRIBUTION")
+#             # print(Counter(all_labels))
+
+#             # print("🔥 NUM IMAGES:", len(self.images))
+#             # print("🔥 NUM LABELS:", len(all_labels))
+#             # print("🔥 UNIQUE LABELS:", sorted(set(all_labels)))
+#     def __getitem__(self, idx: int) -> Dict:
+#         img_path = self.images[idx]
+#         ann = self.annotations[idx]
+
+#         image = Image.open(img_path).convert("RGB")
+#         w_orig, h_orig = image.size
+#         image = image.resize((self.img_size, self.img_size))
+
+#         scale_x, scale_y = self.img_size / w_orig, self.img_size / h_orig
+#         boxes = []
+#         for box in ann["boxes"]:
+#             # x, y, bw, bh = box
+#             # boxes.append([x * scale_x, y * scale_y, (x + bw) * scale_x, (y + bh) * scale_y])
+#             cx = (x + bw / 2) * scale_x / self.img_size
+#             cy = (y + bh / 2) * scale_y / self.img_size
+#             w = bw * scale_x / self.img_size
+#             h = bh * scale_y / self.img_size
+
+#             boxes.append([cx, cy, w, h])
+
+
+#         if self.transform:
+#             image_tensor = self.transform(image)
+#         else:
+#             image_tensor = self._default_transforms()(image)
+
+#         return {
+#             "image": image_tensor,
+#             "boxes": torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4)),
+#             "labels": torch.tensor(ann["labels"], dtype=torch.long),
+#             "image_path": str(img_path),
+#             "dataset": "taco",
+#             "camera_type": self.CAMERA_TYPE,
+#         }
+
+#     def get_client_info(self) -> Dict:
+#         return {
+#             "dataset_name": "TACO",
+#             "camera_type": self.CAMERA_TYPE,
+#             "num_classes": len(self.class_names) - 1,
+#             "num_samples": len(self),
+#             "modality": "RGB (variable)",
+#             "resolution": "Variable (crowdsourced)",
+#             "hardware": "NVIDIA Jetson Orin (Edge)",
+#         }
+
+
+# # ─── MJU-Waste Dataset ────────────────────────────────────────────────────────
+# class MJUWasteDataset(WasteBaseDataset):
+#     """
+#     MJU-Waste Dataset
+
+#     Structure:
+#     mju-waste/
+#     ├── DepthImages/
+#     ├── ImageSets/
+#     │   └── Segmentation/
+#     │       ├── train.txt
+#     │       ├── val.txt
+#     │       ├── test.txt
+#     ├── JPEGImages/
+#     ├── SegmentationClass/
+#     """
+
+#     CLASS_NAMES = ["background", "waste"]
+#     CAMERA_TYPE = "rgbd_kinect"
+
+#     def __init__(
+#         self,
+#         root: str,
+#         split: str = "train",
+#         img_size: int = 640,
+#         use_depth: bool = True,
+#         **kwargs
+#     ):
+#         self.use_depth = use_depth
+#         self.class_names = self.CLASS_NAMES
+
+#         super().__init__(
+#             root=root,
+#             split=split,
+#             img_size=img_size,
+#             **kwargs
+#         )
+
+#     def _load_data(self):
+
+#         split_file = (
+#             self.root
+#             / "ImageSets"
+#             / "Segmentation"
+#             / f"{self.split}.txt"
+#         )
+
+#         if not split_file.exists():
+#             raise FileNotFoundError(
+#                 f"Không tìm thấy split file: {split_file}"
+#             )
+
+#         img_dir = self.root / "JPEGImages"
+#         depth_dir = self.root / "DepthImages"
+#         mask_dir = self.root / "SegmentationClass"
+
+#         with open(split_file, "r") as f:
+#             image_ids = [
+#                 line.strip()
+#                 for line in f.readlines()
+#                 if line.strip()
+#             ]
+
+#         for image_id in image_ids:
+
+#             img_path = img_dir / f"{image_id}.jpg"
+
+#             if not img_path.exists():
+#                 img_path = img_dir / f"{image_id}.png"
+
+#             if not img_path.exists():
+#                 continue
+
+#             depth_path = depth_dir / f"{image_id}.png"
+#             mask_path = mask_dir / f"{image_id}.png"
+
+#             self.images.append(img_path)
+
+#             self.annotations.append({
+#                 "depth_path": (
+#                     str(depth_path)
+#                     if depth_path.exists()
+#                     else None
+#                 ),
+#                 "mask_path": (
+#                     str(mask_path)
+#                     if mask_path.exists()
+#                     else None
+#                 )
+#             })
+
+#     def _load_depth(
+#         self,
+#         depth_path: Optional[str]
+#     ) -> Optional[torch.Tensor]:
+
+#         if depth_path is None:
+#             return None
+
+#         if not Path(depth_path).exists():
+#             return None
+
+#         try:
+#             depth = Image.open(depth_path)
+
+#             depth = depth.resize(
+#                 (self.img_size, self.img_size),
+#                 Image.NEAREST
+#             )
+
+#             depth_arr = np.array(
+#                 depth,
+#                 dtype=np.float32
+#             )
+
+#             depth_arr = (
+#                 depth_arr - depth_arr.min()
+#             ) / (
+#                 depth_arr.max()
+#                 - depth_arr.min()
+#                 + 1e-8
+#             )
+
+#             return torch.from_numpy(
+#                 depth_arr
+#             ).unsqueeze(0)
+
+#         except Exception:
+#             return None
+
+#     def _load_mask(
+#         self,
+#         mask_path: Optional[str]
+#     ) -> Optional[torch.Tensor]:
+
+#         if mask_path is None:
+#             return None
+
+#         if not Path(mask_path).exists():
+#             return None
+
+#         try:
+#             mask = Image.open(mask_path)
+
+#             mask = mask.resize(
+#                 (self.img_size, self.img_size),
+#                 Image.NEAREST
+#             )
+
+#             mask = np.array(mask)
+
+#             mask = (mask > 0).astype(np.uint8)
+
+#             return torch.from_numpy(mask).long()
+
+#         except Exception:
+#             return None
+
+#     def __getitem__(self, idx: int):
+
+#         img_path = self.images[idx]
+#         ann = self.annotations[idx]
+
+#         image = Image.open(img_path).convert("RGB")
+
+#         image = image.resize(
+#             (self.img_size, self.img_size)
+#         )
+
+#         if self.transform:
+#             image_tensor = self.transform(image)
+#         else:
+#             image_tensor = self._default_transforms()(image)
+
+#         # Depth
+#         depth_tensor = None
+
+#         if self.use_depth:
+#             depth_tensor = self._load_depth(
+#                 ann["depth_path"]
+#             )
+
+#         if depth_tensor is None:
+#             depth_tensor = torch.zeros(
+#                 1,
+#                 self.img_size,
+#                 self.img_size
+#             )
+
+#         # Segmentation Mask
+#         mask_tensor = self._load_mask(
+#             ann["mask_path"]
+#         )
+
+#         if mask_tensor is None:
+#             mask_tensor = torch.zeros(
+#                 self.img_size,
+#                 self.img_size,
+#                 dtype=torch.long
+#             )
+#         # tạo pseudo label từ mask
+#         # if mask_tensor.sum() > 0:
+#         #     labels = torch.tensor([1], dtype=torch.long)
+#         # else:
+#         #     labels = torch.tensor([0], dtype=torch.long)
+#         if mask_tensor.sum() > 0:
+#             ys, xs = torch.where(mask_tensor > 0)
+#             x1, x2 = xs.min().item(), xs.max().item()
+#             y1, y2 = ys.min().item(), ys.max().item()
+
+#             cx = (x1 + x2) / 2 / self.img_size
+#             cy = (y1 + y2) / 2 / self.img_size
+#             w = (x2 - x1) / self.img_size
+#             h = (y2 - y1) / self.img_size
+
+#             boxes = torch.tensor([[cx, cy, w, h]], dtype=torch.float32)
+#             labels = torch.tensor([1])
+#         else:
+#             boxes = torch.zeros((0,4))
+#             labels = torch.zeros((0,), dtype=torch.long)
+#         return {
+#             "image": image_tensor,
+#             "depth": depth_tensor,
+#             "mask": mask_tensor,
+            
+#             "boxes": torch.zeros((0,4), dtype=torch.float32),
+
+#             "labels": torch.tensor([1], dtype=torch.long),
+#             "image_path": str(img_path),
+#             "dataset": "mjuwaste",
+#             "camera_type": self.CAMERA_TYPE,
+#         }
+
+#     def get_client_info(self):
+
+#         return {
+#             "dataset_name": "MJU-Waste",
+#             "camera_type": self.CAMERA_TYPE,
+#             "num_classes": 1,
+#             "num_samples": len(self),
+#             "modality": "RGBD",
+#             "resolution": "640x480",
+#             "hardware": "Raspberry Pi 4 (IoT Edge)",
+#         }
 
 # ─── Dataset Factory ─────────────────────────────────────────────────────────
 
 DATASET_CLASSES = {
     "zerowaste-f-final": ZeroWasteDataset,
     "spectralwaste-segmentation": SpectralWasteDataset,
-    "taco-dataset": TACODataset,
-    "mju-waste": MJUWasteDataset,
+    "recyclable-household": RecyclableHouseholdDataset,
+    "garbage-classification": GarbageClassificationDataset,
 }
 
 

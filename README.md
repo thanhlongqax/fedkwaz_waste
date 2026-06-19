@@ -9,7 +9,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                  FedKWAZ MLOps Hub                          │
+│              Prototype-Based FedKWAZ MLOps Hub                          │
 │                                                             │
 │  Proxy Model (ResNet18)                                     │
 │  Prototype Aggregation Engine                              │
@@ -22,8 +22,8 @@
            │
     ┌──────▼──┐    ┌──────▼──┐    ┌──────▼──┐    ┌──────▼──┐
     │Client 0 │    │Client 1 │    │Client 2 │    │Client 3 │
-    │ZeroWaste│    │Spectral │    │  TACO   │    │MJUWaste │
-    │ResNet50 │    │EffNetB3 │    │YOLONano │    │MobileV3 │
+    │ZeroWaste│    │Spectral │    │garbage  │    recyclable-household-waste │
+    │ResNet50 │    │EffNetB3 │    │MobileV3 │    densenet121 │
     │RGB      │    │RGB+HSI  │    │RGB      │    │RGBD     │
     └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘
          │              │              │              │
@@ -158,8 +158,18 @@ python train.py --mode demo --num_rounds 20 --batch_size 8
 ├── SegmentationClass/
 
 ```
----
-
+## 📦 Cấu trúc dataset zerowaste-f-final
+```
+/images/
+├── tên label/
+│   └── default
+    └── real_world   
+    └── labels.json   
+...
+├── tên label/
+│   └── default
+    └── real_world   
+    └── labels.json   
 python train.py \
     --mode full \
     --data_root ./data \

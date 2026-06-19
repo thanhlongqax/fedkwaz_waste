@@ -11,7 +11,7 @@ import matplotlib.patches as mpatches
 from pathlib import Path
 from typing import Dict, List, Optional
 import logging
-
+from PIL import Image
 logger = logging.getLogger(__name__)
 
 # Color scheme cho 4 clients
